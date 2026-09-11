@@ -1,0 +1,24 @@
+[Unit]
+Description=Printing Software & Customer Upload Station
+After=network.target cups.service avahi-daemon.service
+Wants=cups.service avahi-daemon.service
+
+[Service]
+Type=simple
+# Replace 'your_username' and the WorkingDirectory path with your actual Linux user and path
+User=your_username
+WorkingDirectory=/home/your_username/printing-software
+ExecStart=/usr/bin/pnpm start
+Restart=always
+RestartSec=10
+Environment=NODE_ENV=production
+Environment=PORT=4000
+
+# Security and resource sandboxing
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/home/your_username/printing-software/uploads /home/your_username/printing-software/print_jobs.db
+
+[Install]
+WantedBy=multi-user.target
