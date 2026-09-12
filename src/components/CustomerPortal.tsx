@@ -13,6 +13,9 @@ import {
   Minus,
   Sun,
   Moon,
+  Trash2,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import {
   ShopDetails,
@@ -21,12 +24,26 @@ import {
   SidesMode,
   OrientationMode,
   PrintJob,
+  JobFile,
 } from '../types.js';
 import { PDFDocument } from 'pdf-lib';
 import { fetchShopDetails, fetchSettings, fetchEffectivePricing, uploadJob, connectLiveWebSocket } from '../api.js';
 import { calculatePrintCost, DEFAULT_PRICING } from '../utils/costCalculator.js';
 import { formatCurrency, formatFileSize } from '../utils/formatters.js';
 import { useTheme } from '../theme.js';
+
+interface UploadedFileItem {
+  id: string;
+  file: File;
+  detectedPages: number;
+  customOptions?: {
+    colorMode?: ColorMode;
+    sides?: SidesMode;
+    orientation?: OrientationMode;
+    copies?: number;
+    pageRange?: string;
+  };
+}
 
 export const CustomerPortal: React.FC = () => {
   const [shop, setShop] = useState<ShopDetails | null>(null);
@@ -37,14 +54,16 @@ export const CustomerPortal: React.FC = () => {
   const [customerName, setCustomerName] = useState(() => {
     return localStorage.getItem('jmart_customer_name') || '';
   });
-  const [file, setFile] = useState<File | null>(null);
-  const [colorMode, setColorMode] = useState<ColorMode>('bw');
-  const [sides, setSides] = useState<SidesMode>('single');
-  const [orientation, setOrientation] = useState<OrientationMode>('auto');
-  const [copies, setCopies] = useState<number>(1);
+  const [files, setFiles] = useState<UploadedFileItem[]>([]);
+  const [masterColorMode, setMasterColorMode] = useState<ColorMode>('bw');
+  const [masterSides, setMasterSides] = useState<SidesMode>('single');
+  const [masterOrientation, setMasterOrientation] = useState<OrientationMode>('auto');
+  const [masterCopies, setMasterCopies] = useState<number>(1);
   const [pageRangeMode, setPageRangeMode] = useState<'all' | 'custom'>('all');
   const [customRange, setCustomRange] = useState<string>('');
-  const [detectedPages, setDetectedPages] = useState<number>(1);
+
+  // Per-file customization toggle
+  const [showPerFileSettings, setShowPerFileSettings] = useState(false);
 
   // Status & submission states
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -84,7 +103,7 @@ export const CustomerPortal: React.FC = () => {
     loadEffectivePricing();
   }, []);
 
-  // Listen for real-time status updates on submitted job and live pricing/toggle updates
+  // Real-time WebSocket sync
   useEffect(() => {
     const cleanup = connectLiveWebSocket((msg) => {
       if (
@@ -102,27 +121,25 @@ export const CustomerPortal: React.FC = () => {
     return cleanup;
   }, [submittedJob?.id]);
 
-  // Auto-fallback if an active option becomes unavailable
+  // Fallback if capabilities change
   useEffect(() => {
-    if (pricing.color_available === false && colorMode === 'color') {
-      setColorMode('bw');
+    if (pricing.color_available === false && masterColorMode === 'color') {
+      setMasterColorMode('bw');
     }
-  }, [pricing.color_available, colorMode]);
+  }, [pricing.color_available, masterColorMode]);
 
   useEffect(() => {
-    if (pricing.duplex_available === false && sides === 'duplex') {
-      setSides('single');
+    if (pricing.duplex_available === false && masterSides === 'duplex') {
+      setMasterSides('single');
     }
-  }, [pricing.duplex_available, sides]);
+  }, [pricing.duplex_available, masterSides]);
 
-  // When file changes, detect page count
-  const handleFileChange = async (selectedFile: File) => {
-    setErrorMessage(null);
-    setFile(selectedFile);
-
+  // Helper to detect page count of an uploaded file
+  const inspectPageCount = async (selectedFile: File): Promise<number> => {
     if (selectedFile.type.startsWith('image/')) {
-      setDetectedPages(1);
-    } else if (
+      return 1;
+    }
+    if (
       selectedFile.type === 'application/pdf' ||
       selectedFile.name.toLowerCase().endsWith('.pdf')
     ) {
@@ -131,23 +148,65 @@ export const CustomerPortal: React.FC = () => {
         try {
           const pdfDoc = await PDFDocument.load(buffer, { ignoreEncryption: true });
           const count = pdfDoc.getPageCount();
-          setDetectedPages(count && count > 0 ? count : 1);
+          return count && count > 0 ? count : 1;
         } catch {
           const text = new TextDecoder('latin1').decode(buffer);
           const pageMatches = text.match(/\/Type\s*\/Page\b/g);
-          if (pageMatches && pageMatches.length > 0) {
-            setDetectedPages(pageMatches.length);
-          } else {
-            setDetectedPages(1);
-          }
+          return pageMatches && pageMatches.length > 0 ? pageMatches.length : 1;
         }
       } catch (err) {
-        console.warn('Could not inspect PDF page count in browser:', err);
-        setDetectedPages(1);
+        console.warn('Could not inspect PDF pages in browser:', err);
+        return 1;
       }
-    } else {
-      setDetectedPages(1);
     }
+    return 1;
+  };
+
+  // Add multiple files
+  const handleAddFiles = async (newFileList: FileList | File[]) => {
+    setErrorMessage(null);
+    const newItems: UploadedFileItem[] = [];
+
+    for (let i = 0; i < newFileList.length; i++) {
+      const f = newFileList[i];
+      const pages = await inspectPageCount(f);
+      newItems.push({
+        id: `client_file_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        file: f,
+        detectedPages: pages,
+      });
+    }
+
+    setFiles((prev) => [...prev, ...newItems]);
+  };
+
+  const handleRemoveFile = (id: string) => {
+    setFiles((prev) => prev.filter((f) => f.id !== id));
+  };
+
+  const handleUpdateFilePages = (id: string, newPages: number) => {
+    setFiles((prev) =>
+      prev.map((f) => (f.id === id ? { ...f, detectedPages: Math.max(1, newPages) } : f))
+    );
+  };
+
+  const handleUpdateFileCustomOption = (
+    id: string,
+    key: 'colorMode' | 'sides' | 'copies' | 'pageRange',
+    value: any
+  ) => {
+    setFiles((prev) =>
+      prev.map((f) => {
+        if (f.id !== id) return f;
+        return {
+          ...f,
+          customOptions: {
+            ...f.customOptions,
+            [key]: value,
+          },
+        };
+      })
+    );
   };
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -162,26 +221,43 @@ export const CustomerPortal: React.FC = () => {
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragOver(false);
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      handleFileChange(e.dataTransfer.files[0]);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      handleAddFiles(e.dataTransfer.files);
     }
   };
 
-  // Live calculated cost
-  const activePageRange = pageRangeMode === 'all' ? 'all' : customRange;
-  const costEstimate = calculatePrintCost({
-    totalPages: detectedPages,
-    pageRange: activePageRange,
-    colorMode,
-    sides,
-    copies,
-    pricing,
-  });
+  // Cumulative cost calculations across all files
+  const activeMasterPageRange = pageRangeMode === 'all' ? 'all' : customRange;
+
+  const costSummary = files.reduce(
+    (acc, item) => {
+      const fColorMode = item.customOptions?.colorMode || masterColorMode;
+      const fSides = item.customOptions?.sides || masterSides;
+      const fCopies = item.customOptions?.copies || masterCopies;
+      const fRange = item.customOptions?.pageRange || activeMasterPageRange;
+
+      const calc = calculatePrintCost({
+        totalPages: item.detectedPages,
+        pageRange: fRange,
+        colorMode: fColorMode,
+        sides: fSides,
+        copies: fCopies,
+        pricing,
+      });
+
+      return {
+        totalCost: acc.totalCost + calc.totalCost,
+        totalPages: acc.totalPages + calc.effectivePages * fCopies,
+        totalSheets: acc.totalSheets + calc.sheets * fCopies,
+      };
+    },
+    { totalCost: 0, totalPages: 0, totalSheets: 0 }
+  );
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!file) {
-      setErrorMessage('Please select a PDF or image document to print.');
+    if (files.length === 0) {
+      setErrorMessage('Please add at least one document to print.');
       return;
     }
 
@@ -193,19 +269,33 @@ export const CustomerPortal: React.FC = () => {
 
     try {
       const formData = new FormData();
-      formData.append('file', file);
       formData.append('customerName', trimmedName);
-      formData.append('colorMode', colorMode);
-      formData.append('sides', sides);
-      formData.append('orientation', orientation);
-      formData.append('copies', String(copies));
-      formData.append('pageRange', activePageRange);
-      formData.append('pageCount', String(detectedPages));
+      formData.append('colorMode', masterColorMode);
+      formData.append('sides', masterSides);
+      formData.append('orientation', masterOrientation);
+      formData.append('copies', String(masterCopies));
+      formData.append('pageRange', activeMasterPageRange);
+
+      // Append all physical files
+      for (const item of files) {
+        formData.append('files', item.file);
+      }
+
+      // Append per-file custom settings
+      const fileOptions = files.map((item) => ({
+        colorMode: item.customOptions?.colorMode || masterColorMode,
+        sides: item.customOptions?.sides || masterSides,
+        orientation: item.customOptions?.orientation || masterOrientation,
+        copies: item.customOptions?.copies || masterCopies,
+        pageRange: item.customOptions?.pageRange || activeMasterPageRange,
+        pageCount: item.detectedPages,
+      }));
+      formData.append('fileOptions', JSON.stringify(fileOptions));
 
       const res = await uploadJob(formData);
       setSubmittedJob(res.job);
     } catch (err: any) {
-      setErrorMessage(err.message || 'Failed to submit document. Please try again.');
+      setErrorMessage(err.message || 'Failed to submit documents. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
@@ -213,16 +303,17 @@ export const CustomerPortal: React.FC = () => {
 
   const handleReset = () => {
     setSubmittedJob(null);
-    setFile(null);
+    setFiles([]);
     setPageRangeMode('all');
     setCustomRange('');
-    setCopies(1);
+    setMasterCopies(1);
+    setShowPerFileSettings(false);
     setErrorMessage(null);
   };
 
   return (
     <div className="min-h-screen py-4 px-3 sm:py-8 sm:px-6 flex flex-col justify-between font-sans text-[var(--ink)]">
-      <div className="max-w-xl mx-auto w-full">
+      <div className="max-w-2xl mx-auto w-full">
         {/* Shop Header Banner */}
         <header className="bg-[var(--panel)] rounded-2xl p-4 sm:p-5 shadow-sm border border-[var(--border)] mb-5 flex items-center justify-between">
           <div className="flex items-center gap-3.5">
@@ -252,7 +343,7 @@ export const CustomerPortal: React.FC = () => {
             <button
               onClick={() => toggleTheme()}
               title={`Switch to ${theme === 'dark' ? 'Light' : 'Dark'} mode`}
-              className="p-2 rounded-xl border border-[var(--border)] bg-[var(--sub)] hover:bg-[var(--panel)] text-[var(--ink2)] hover:text-[var(--ink)] transition"
+              className="p-2 rounded-xl border border-[var(--border)] bg-[var(--sub)] hover:bg-[var(--panel)] text-[var(--ink2)] hover:text-[var(--ink)] transition cursor-pointer"
             >
               {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
             </button>
@@ -270,10 +361,10 @@ export const CustomerPortal: React.FC = () => {
             </div>
 
             <h2 className="text-xl sm:text-2xl font-black text-[var(--ink)] mb-1">
-              Document Uploaded Successfully!
+              Documents Uploaded Successfully!
             </h2>
             <p className="text-sm text-[var(--ink3)] mb-6">
-              Please mention your Token ID at the counter to collect your print.
+              Please mention your Token ID at the counter to collect your prints.
             </p>
 
             {/* Token Badge */}
@@ -287,7 +378,7 @@ export const CustomerPortal: React.FC = () => {
               </div>
             </div>
 
-            {/* Live Status Tracker */}
+            {/* Live Status Tracker & Files Breakdown */}
             <div className="bg-[var(--sub)] rounded-2xl p-4 border border-[var(--rule)] mb-6 text-left">
               <div className="flex items-center justify-between mb-3">
                 <span className="dc-eyebrow text-[var(--ink3)]">Live Status</span>
@@ -309,34 +400,53 @@ export const CustomerPortal: React.FC = () => {
                 </span>
               </div>
 
-              <div className="space-y-2 text-sm text-[var(--ink2)]">
-                <div className="flex justify-between">
-                  <span className="text-[var(--ink3)]">Document:</span>
-                  <span className="font-medium truncate max-w-[200px] text-[var(--ink)]">{submittedJob.original_filename}</span>
+              {/* Uploaded Documents List */}
+              <div className="space-y-2 text-sm text-[var(--ink2)] mb-3">
+                <span className="text-xs font-mono text-[var(--ink3)] font-bold block mb-1">
+                  Uploaded Documents ({submittedJob.files?.length || submittedJob.total_files || 1}):
+                </span>
+                <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                  {(submittedJob.files && submittedJob.files.length > 0
+                    ? submittedJob.files
+                    : [
+                        {
+                          id: 'f1',
+                          original_filename: submittedJob.original_filename,
+                          page_count: submittedJob.page_count,
+                          estimated_cost: submittedJob.estimated_cost,
+                        } as JobFile,
+                      ]
+                  ).map((f, idx) => (
+                    <div
+                      key={f.id || idx}
+                      className="p-2 rounded-lg bg-[var(--panel)] border border-[var(--rule)] flex items-center justify-between text-xs font-mono"
+                    >
+                      <div className="flex items-center gap-2 truncate">
+                        <FileText className="w-3.5 h-3.5 text-[var(--accent)] shrink-0" />
+                        <span className="truncate font-medium text-[var(--ink)]">{f.original_filename}</span>
+                      </div>
+                      <div className="shrink-0 flex items-center gap-2 text-[var(--ink3)]">
+                        <span>{f.page_count} pgs</span>
+                        <span className="font-bold text-[var(--ink)]">{formatCurrency(f.estimated_cost)}</span>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-                <div className="flex justify-between font-mono text-xs">
-                  <span className="text-[var(--ink3)]">Print Mode:</span>
-                  <span className="font-medium capitalize text-[var(--ink)]">
-                    {submittedJob.color_mode === 'bw' ? 'Black & White' : 'Color'} •{' '}
-                    {submittedJob.sides === 'duplex' ? 'Front & Back (Duplex)' : 'Single Sided'}
-                  </span>
-                </div>
-                <div className="flex justify-between font-mono text-xs">
-                  <span className="text-[var(--ink3)]">Copies:</span>
-                  <span className="font-medium text-[var(--ink)]">{submittedJob.copies}</span>
-                </div>
+
                 <div className="flex justify-between border-t border-[var(--rule)] pt-2 font-bold text-[var(--ink)]">
                   <span className="dc-eyebrow">Estimated Total:</span>
-                  <span className="dc-mono text-[var(--accent)] text-base font-bold">{formatCurrency(submittedJob.estimated_cost)}</span>
+                  <span className="dc-mono text-[var(--accent)] text-base font-bold">
+                    {formatCurrency(submittedJob.estimated_cost)}
+                  </span>
                 </div>
               </div>
             </div>
 
             <button
               onClick={handleReset}
-              className="w-full py-3.5 px-5 rounded-xl font-bold bg-[var(--accent)] text-white hover:opacity-90 transition shadow flex items-center justify-center gap-2"
+              className="w-full py-3.5 px-5 rounded-xl font-bold bg-[var(--accent)] text-white hover:opacity-90 transition shadow flex items-center justify-center gap-2 cursor-pointer"
             >
-              <RefreshCw className="w-4 h-4" /> Upload Another Document
+              <RefreshCw className="w-4 h-4" /> Upload More Documents
             </button>
           </div>
         ) : (
@@ -357,88 +467,112 @@ export const CustomerPortal: React.FC = () => {
               />
             </div>
 
-            {/* File Upload Dropzone */}
+            {/* Multi-File Upload Dropzone & List */}
             <div className="bg-[var(--panel)] rounded-2xl p-4 sm:p-5 shadow-sm border border-[var(--border)]">
-              <label className="dc-eyebrow block mb-2 text-[var(--ink3)]">
-                Select Document <span className="text-[var(--accent)]">*</span>
-              </label>
+              <div className="flex items-center justify-between mb-2">
+                <label className="dc-eyebrow text-[var(--ink3)]">
+                  Documents to Print <span className="text-[var(--accent)]">*</span>
+                </label>
+                <span className="text-xs font-mono text-[var(--ink3)]">
+                  {files.length} document{files.length !== 1 ? 's' : ''} selected
+                </span>
+              </div>
 
               <input
                 ref={fileInputRef}
                 type="file"
+                multiple
                 accept=".pdf,.jpg,.jpeg,.png,.webp,image/*,application/pdf"
                 className="hidden"
                 onChange={(e) => {
-                  if (e.target.files && e.target.files[0]) {
-                    handleFileChange(e.target.files[0]);
+                  if (e.target.files && e.target.files.length > 0) {
+                    handleAddFiles(e.target.files);
+                    // Clear input so same file can be chosen again if desired
+                    e.target.value = '';
                   }
                 }}
               />
 
-              {file ? (
-                <div className="border border-[var(--accent-line)] bg-[var(--accent-soft)] rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="flex items-center gap-3 overflow-hidden">
-                    <div className="w-10 h-10 rounded-lg bg-[var(--accent)] text-white flex items-center justify-center shrink-0">
-                      <FileText className="w-5 h-5" />
-                    </div>
-                    <div className="truncate">
-                      <p className="text-sm font-bold text-[var(--ink)] truncate">{file.name}</p>
-                      <p className="font-mono text-xs text-[var(--ink3)]">
-                        {formatFileSize(file.size)} • {detectedPages} {detectedPages === 1 ? 'page' : 'pages'} detected
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 self-end sm:self-center">
-                    <div className="flex items-center gap-1.5 text-xs text-[var(--ink2)] bg-[var(--panel)] px-2.5 py-1 rounded-lg border border-[var(--border)]">
-                      <span className="font-mono text-[11px]">Pages:</span>
-                      <input
-                        type="number"
-                        min={1}
-                        max={9999}
-                        value={detectedPages}
-                        onChange={(e) => setDetectedPages(Math.max(1, parseInt(e.target.value, 10) || 1))}
-                        className="w-12 text-center font-mono font-bold text-[var(--ink)] bg-transparent focus:outline-none border-b border-[var(--accent)]"
-                        title="Confirm or edit detected page count"
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => fileInputRef.current?.click()}
-                      className="text-xs text-[var(--accent)] font-bold hover:underline px-2 py-1"
+              {/* Uploaded Documents List */}
+              {files.length > 0 && (
+                <div className="space-y-2 mb-4">
+                  {files.map((item, idx) => (
+                    <div
+                      key={item.id}
+                      className="border border-[var(--accent-line)] bg-[var(--accent-soft)] rounded-xl p-3 flex flex-wrap items-center justify-between gap-2"
                     >
-                      Change
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div
-                  onDragOver={handleDragOver}
-                  onDragLeave={handleDragLeave}
-                  onDrop={handleDrop}
-                  onClick={() => fileInputRef.current?.click()}
-                  className={`border-2 border-dashed rounded-2xl p-6 sm:p-8 text-center cursor-pointer transition-all ${
-                    isDragOver
-                      ? 'border-[var(--accent)] bg-[var(--accent-soft)] scale-[0.99]'
-                      : 'border-[var(--border)] hover:border-[var(--accent)] hover:bg-[var(--sub)]'
-                  }`}
-                >
-                  <div className="w-12 h-12 rounded-full bg-[var(--sub)] border border-[var(--border)] text-[var(--accent)] flex items-center justify-center mx-auto mb-3">
-                    <Upload className="w-6 h-6" />
-                  </div>
-                  <p className="text-sm font-bold text-[var(--ink)]">
-                    Tap to upload or drag & drop document
-                  </p>
-                  <p className="font-mono text-xs text-[var(--ink3)] mt-1">
-                    Accepts PDF, JPG, PNG files (up to 50MB)
-                  </p>
+                      <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                        <div className="w-8 h-8 rounded-lg bg-[var(--accent)] text-white flex items-center justify-center shrink-0 text-xs">
+                          {idx + 1}
+                        </div>
+                        <div className="truncate">
+                          <p className="text-xs sm:text-sm font-bold text-[var(--ink)] truncate" title={item.file.name}>
+                            {item.file.name}
+                          </p>
+                          <p className="font-mono text-[11px] text-[var(--ink3)]">
+                            {formatFileSize(item.file.size)} • {item.detectedPages} page{item.detectedPages > 1 ? 's' : ''}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        {/* Pages counter */}
+                        <div className="flex items-center gap-1 text-xs text-[var(--ink2)] bg-[var(--panel)] px-2 py-0.5 rounded-lg border border-[var(--border)]">
+                          <span className="font-mono text-[10px]">Pgs:</span>
+                          <input
+                            type="number"
+                            min={1}
+                            max={9999}
+                            value={item.detectedPages}
+                            onChange={(e) => handleUpdateFilePages(item.id, parseInt(e.target.value, 10) || 1)}
+                            className="w-10 text-center font-mono font-bold text-[var(--ink)] bg-transparent focus:outline-none"
+                            title="Confirm page count"
+                          />
+                        </div>
+
+                        {/* Remove file button */}
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveFile(item.id)}
+                          title="Remove this document"
+                          className="p-1 rounded-lg text-[var(--ink3)] hover:text-[var(--danger)] hover:bg-[var(--danger-soft)] transition cursor-pointer"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
+
+              {/* Dropzone / Add Button */}
+              <div
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                onClick={() => fileInputRef.current?.click()}
+                className={`border-2 border-dashed rounded-2xl p-5 sm:p-6 text-center cursor-pointer transition-all ${
+                  isDragOver
+                    ? 'border-[var(--accent)] bg-[var(--accent-soft)] scale-[0.99]'
+                    : 'border-[var(--border)] hover:border-[var(--accent)] hover:bg-[var(--sub)]'
+                }`}
+              >
+                <div className="w-10 h-10 rounded-full bg-[var(--sub)] border border-[var(--border)] text-[var(--accent)] flex items-center justify-center mx-auto mb-2">
+                  <Upload className="w-5 h-5" />
+                </div>
+                <p className="text-xs sm:text-sm font-bold text-[var(--ink)]">
+                  {files.length === 0 ? 'Tap to upload or drag & drop documents' : '+ Add more documents'}
+                </p>
+                <p className="font-mono text-[11px] text-[var(--ink3)] mt-0.5">
+                  Accepts multiple PDF, JPG, PNG files (up to 100MB total)
+                </p>
+              </div>
             </div>
 
-            {/* Print Options */}
+            {/* Master Print Options */}
             <div className="bg-[var(--panel)] rounded-2xl p-4 sm:p-5 shadow-sm border border-[var(--border)] space-y-4">
               <h2 className="dc-eyebrow text-[var(--ink3)]">
-                Print Preferences
+                Print Preferences (Applies to all documents)
               </h2>
 
               {/* Color Mode */}
@@ -447,14 +581,14 @@ export const CustomerPortal: React.FC = () => {
                 <div className="grid grid-cols-2 gap-2.5">
                   <button
                     type="button"
-                    onClick={() => setColorMode('bw')}
-                    className={`py-3 px-3 rounded-xl border text-sm font-bold flex items-center justify-center gap-2 transition ${
-                      colorMode === 'bw'
+                    onClick={() => setMasterColorMode('bw')}
+                    className={`py-2.5 px-3 rounded-xl border text-sm font-bold flex items-center justify-center gap-2 transition cursor-pointer ${
+                      masterColorMode === 'bw'
                         ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--ink)] border-2 shadow-xs'
                         : 'border-[var(--border)] bg-[var(--sub)] text-[var(--ink2)] hover:bg-[var(--rule)]'
                     }`}
                   >
-                    <div className={`w-3 h-3 rounded-full ${colorMode === 'bw' ? 'bg-[var(--ink)]' : 'bg-[var(--ink4)]'}`} />
+                    <div className={`w-3 h-3 rounded-full ${masterColorMode === 'bw' ? 'bg-[var(--ink)]' : 'bg-[var(--ink4)]'}`} />
                     <span className="font-mono text-xs sm:text-sm">B&W ({formatCurrency(pricing.bw_price_per_page)}/pg)</span>
                   </button>
 
@@ -462,12 +596,12 @@ export const CustomerPortal: React.FC = () => {
                     type="button"
                     disabled={pricing.color_available === false}
                     onClick={() => {
-                      if (pricing.color_available !== false) setColorMode('color');
+                      if (pricing.color_available !== false) setMasterColorMode('color');
                     }}
-                    className={`py-3 px-3 rounded-xl border text-sm font-bold flex items-center justify-center gap-2 transition relative ${
+                    className={`py-2.5 px-3 rounded-xl border text-sm font-bold flex items-center justify-center gap-2 transition relative cursor-pointer ${
                       pricing.color_available === false
                         ? 'border-[var(--rule)] bg-[var(--sub)]/50 text-[var(--ink4)] opacity-50 cursor-not-allowed'
-                        : colorMode === 'color'
+                        : masterColorMode === 'color'
                         ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--ink)] border-2 shadow-xs'
                         : 'border-[var(--border)] bg-[var(--sub)] text-[var(--ink2)] hover:bg-[var(--rule)]'
                     }`}
@@ -499,9 +633,9 @@ export const CustomerPortal: React.FC = () => {
                 <div className="grid grid-cols-2 gap-2.5">
                   <button
                     type="button"
-                    onClick={() => setSides('single')}
-                    className={`py-3 px-3 rounded-xl border text-sm font-bold flex items-center justify-center gap-2 transition ${
-                      sides === 'single'
+                    onClick={() => setMasterSides('single')}
+                    className={`py-2.5 px-3 rounded-xl border text-sm font-bold flex items-center justify-center gap-2 transition cursor-pointer ${
+                      masterSides === 'single'
                         ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--ink)] border-2'
                         : 'border-[var(--border)] bg-[var(--sub)] text-[var(--ink2)] hover:bg-[var(--rule)]'
                     }`}
@@ -513,12 +647,12 @@ export const CustomerPortal: React.FC = () => {
                     type="button"
                     disabled={pricing.duplex_available === false}
                     onClick={() => {
-                      if (pricing.duplex_available !== false) setSides('duplex');
+                      if (pricing.duplex_available !== false) setMasterSides('duplex');
                     }}
-                    className={`py-3 px-3 rounded-xl border text-sm font-bold flex items-center justify-center gap-2 transition relative ${
+                    className={`py-2.5 px-3 rounded-xl border text-sm font-bold flex items-center justify-center gap-2 transition relative cursor-pointer ${
                       pricing.duplex_available === false
                         ? 'border-[var(--rule)] bg-[var(--sub)]/50 text-[var(--ink4)] opacity-50 cursor-not-allowed'
-                        : sides === 'duplex'
+                        : masterSides === 'duplex'
                         ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--ink)] border-2'
                         : 'border-[var(--border)] bg-[var(--sub)] text-[var(--ink2)] hover:bg-[var(--rule)]'
                     }`}
@@ -537,14 +671,13 @@ export const CustomerPortal: React.FC = () => {
                 </div>
               </div>
 
-              {/* Orientation & Copies in grid */}
+              {/* Orientation & Copies */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                {/* Orientation */}
                 <div>
                   <label className="block text-xs font-semibold text-[var(--ink2)] mb-1.5 font-mono">Orientation</label>
                   <select
-                    value={orientation}
-                    onChange={(e) => setOrientation(e.target.value as OrientationMode)}
+                    value={masterOrientation}
+                    onChange={(e) => setMasterOrientation(e.target.value as OrientationMode)}
                     className="w-full py-2.5 px-3 rounded-xl border border-[var(--border)] bg-[var(--sub)] font-medium text-sm text-[var(--ink)] focus:border-[var(--accent)] focus:outline-none font-mono"
                   >
                     <option value="auto">Auto / Standard</option>
@@ -553,14 +686,13 @@ export const CustomerPortal: React.FC = () => {
                   </select>
                 </div>
 
-                {/* Copies Counter */}
                 <div>
-                  <label className="block text-xs font-semibold text-[var(--ink2)] mb-1.5 font-mono">Copies</label>
+                  <label className="block text-xs font-semibold text-[var(--ink2)] mb-1.5 font-mono">Copies per Document</label>
                   <div className="flex items-center rounded-xl border border-[var(--border)] bg-[var(--sub)] overflow-hidden">
                     <button
                       type="button"
-                      onClick={() => setCopies((prev) => Math.max(1, prev - 1))}
-                      className="px-3 py-2 text-[var(--ink2)] hover:bg-[var(--rule)] active:bg-[var(--border)] transition"
+                      onClick={() => setMasterCopies((prev) => Math.max(1, prev - 1))}
+                      className="px-3 py-2 text-[var(--ink2)] hover:bg-[var(--rule)] active:bg-[var(--border)] transition cursor-pointer"
                     >
                       <Minus className="w-4 h-4" />
                     </button>
@@ -568,14 +700,14 @@ export const CustomerPortal: React.FC = () => {
                       type="number"
                       min={1}
                       max={999}
-                      value={copies}
-                      onChange={(e) => setCopies(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                      value={masterCopies}
+                      onChange={(e) => setMasterCopies(Math.max(1, parseInt(e.target.value, 10) || 1))}
                       className="w-full text-center font-mono font-bold text-[var(--ink)] bg-transparent focus:outline-none"
                     />
                     <button
                       type="button"
-                      onClick={() => setCopies((prev) => prev + 1)}
-                      className="px-3 py-2 text-[var(--ink2)] hover:bg-[var(--rule)] active:bg-[var(--border)] transition"
+                      onClick={() => setMasterCopies((prev) => prev + 1)}
+                      className="px-3 py-2 text-[var(--ink2)] hover:bg-[var(--rule)] active:bg-[var(--border)] transition cursor-pointer"
                     >
                       <Plus className="w-4 h-4" />
                     </button>
@@ -591,7 +723,7 @@ export const CustomerPortal: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => setPageRangeMode('all')}
-                      className={`text-xs px-2.5 py-0.5 rounded font-mono font-medium border ${
+                      className={`text-xs px-2.5 py-0.5 rounded font-mono font-medium border cursor-pointer ${
                         pageRangeMode === 'all'
                           ? 'bg-[var(--accent)] text-white border-[var(--accent)]'
                           : 'bg-[var(--sub)] text-[var(--ink3)] border-[var(--border)] hover:bg-[var(--rule)]'
@@ -602,7 +734,7 @@ export const CustomerPortal: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => setPageRangeMode('custom')}
-                      className={`text-xs px-2.5 py-0.5 rounded font-mono font-medium border ${
+                      className={`text-xs px-2.5 py-0.5 rounded font-mono font-medium border cursor-pointer ${
                         pageRangeMode === 'custom'
                           ? 'bg-[var(--accent)] text-white border-[var(--accent)]'
                           : 'bg-[var(--sub)] text-[var(--ink3)] border-[var(--border)] hover:bg-[var(--rule)]'
@@ -623,21 +755,70 @@ export const CustomerPortal: React.FC = () => {
                   />
                 )}
               </div>
+
+              {/* Optional Per-File Customization Accordion */}
+              {files.length > 1 && (
+                <div className="pt-2 border-t border-[var(--rule)]">
+                  <button
+                    type="button"
+                    onClick={() => setShowPerFileSettings(!showPerFileSettings)}
+                    className="text-xs font-bold font-mono text-[var(--accent)] hover:underline flex items-center justify-between w-full py-1 cursor-pointer"
+                  >
+                    <span>Customize individual documents ({files.length})</span>
+                    {showPerFileSettings ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                  </button>
+
+                  {showPerFileSettings && (
+                    <div className="mt-3 space-y-3 pl-1">
+                      {files.map((f, idx) => (
+                        <div key={f.id} className="p-3 bg-[var(--sub)] rounded-xl border border-[var(--rule)] space-y-2">
+                          <span className="text-xs font-bold font-mono text-[var(--ink)] truncate block">
+                            Doc #{idx + 1}: {f.file.name}
+                          </span>
+                          <div className="grid grid-cols-2 gap-2 text-xs">
+                            <select
+                              value={f.customOptions?.colorMode || masterColorMode}
+                              onChange={(e) =>
+                                handleUpdateFileCustomOption(f.id, 'colorMode', e.target.value as ColorMode)
+                              }
+                              className="px-2 py-1 rounded-lg border border-[var(--border)] bg-[var(--panel)] font-mono"
+                            >
+                              <option value="bw">B&W</option>
+                              {pricing.color_available !== false && <option value="color">Color</option>}
+                            </select>
+
+                            <select
+                              value={f.customOptions?.sides || masterSides}
+                              onChange={(e) =>
+                                handleUpdateFileCustomOption(f.id, 'sides', e.target.value as SidesMode)
+                              }
+                              className="px-2 py-1 rounded-lg border border-[var(--border)] bg-[var(--panel)] font-mono"
+                            >
+                              <option value="single">Single Side</option>
+                              {pricing.duplex_available !== false && <option value="duplex">Front & Back</option>}
+                            </select>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
-            {/* Live Cost Breakdown */}
+            {/* Live Cumulative Cost Breakdown */}
             <div className="bg-[var(--panel)] border border-[var(--accent-line)] rounded-2xl p-4 sm:p-5 shadow-sm flex items-center justify-between">
               <div>
                 <span className="dc-eyebrow text-[var(--accent)] block">
-                  Live Cost Estimate
+                  Cumulative Total Estimate
                 </span>
                 <p className="font-mono text-xs text-[var(--ink3)] mt-0.5">
-                  {costEstimate.breakdownText}
+                  {files.length} document{files.length !== 1 ? 's' : ''} • {costSummary.totalPages} total page{costSummary.totalPages !== 1 ? 's' : ''}
                 </p>
               </div>
               <div className="text-right">
                 <span className="dc-mono text-2xl sm:text-3xl font-black text-[var(--ink)]">
-                  {formatCurrency(costEstimate.totalCost)}
+                  {formatCurrency(costSummary.totalCost)}
                 </span>
               </div>
             </div>
@@ -652,16 +833,16 @@ export const CustomerPortal: React.FC = () => {
             {/* Submit Button */}
             <button
               type="submit"
-              disabled={isSubmitting || !file}
-              className="w-full py-4 px-6 rounded-2xl font-bold text-base tracking-wide bg-[var(--accent)] hover:opacity-90 text-white shadow-md disabled:opacity-50 disabled:pointer-events-none transition flex items-center justify-center gap-2"
+              disabled={isSubmitting || files.length === 0}
+              className="w-full py-4 px-6 rounded-2xl font-bold text-base tracking-wide bg-[var(--accent)] hover:opacity-90 text-white shadow-md disabled:opacity-50 disabled:pointer-events-none transition flex items-center justify-center gap-2 cursor-pointer"
             >
               {isSubmitting ? (
                 <>
-                  <RefreshCw className="w-5 h-5 animate-spin" /> Uploading & Queuing Document...
+                  <RefreshCw className="w-5 h-5 animate-spin" /> Uploading & Queuing Documents...
                 </>
               ) : (
                 <>
-                  <Printer className="w-5 h-5" /> Submit Print Job • {formatCurrency(costEstimate.totalCost)}
+                  <Printer className="w-5 h-5" /> Submit Print Order • {formatCurrency(costSummary.totalCost)}
                 </>
               )}
             </button>
@@ -670,7 +851,7 @@ export const CustomerPortal: React.FC = () => {
       </div>
 
       {/* Footer info */}
-      <footer className="max-w-xl mx-auto w-full text-center text-xs text-[var(--ink4)] mt-6 pt-4 border-t border-[var(--rule)]">
+      <footer className="max-w-2xl mx-auto w-full text-center text-xs text-[var(--ink4)] mt-6 pt-4 border-t border-[var(--rule)]">
         <p>
           {shop?.shopName || 'J MART'} Quick Print Station • Fast walk-in printing service
         </p>

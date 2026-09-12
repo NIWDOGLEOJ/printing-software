@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
-import { PrintJob, PricingSettings, PrinterProfile, EffectivePricing } from '../shared/types.js';
+import { PrintJob, JobFile, PricingSettings, PrinterProfile, EffectivePricing } from '../shared/types.js';
 import { DEFAULT_PRICING, calculateEffectivePricing } from '../shared/costCalculator.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -58,12 +58,92 @@ db.exec(`
     created_at        TEXT NOT NULL,
     printed_at        TEXT,
     printer_name      TEXT,
-    cups_job_id       TEXT
+    cups_job_id       TEXT,
+    total_files       INTEGER NOT NULL DEFAULT 1,
+    total_pages       INTEGER NOT NULL DEFAULT 1
   );
 
   CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
   CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs(created_at);
+
+  CREATE TABLE IF NOT EXISTS job_files (
+    id                TEXT PRIMARY KEY,
+    job_id            TEXT NOT NULL,
+    original_filename TEXT NOT NULL,
+    stored_filename   TEXT NOT NULL,
+    file_path         TEXT NOT NULL,
+    file_size         INTEGER NOT NULL,
+    mime_type         TEXT NOT NULL,
+    page_count        INTEGER NOT NULL,
+    color_mode        TEXT NOT NULL,
+    sides             TEXT NOT NULL,
+    orientation       TEXT NOT NULL,
+    copies            INTEGER NOT NULL DEFAULT 1,
+    page_range        TEXT NOT NULL DEFAULT 'all',
+    effective_pages   INTEGER NOT NULL DEFAULT 1,
+    estimated_cost    REAL NOT NULL DEFAULT 0,
+    file_index        INTEGER NOT NULL DEFAULT 0,
+    status            TEXT NOT NULL DEFAULT 'pending',
+    cups_job_id       TEXT,
+    printed_at        TEXT,
+    FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_job_files_job_id ON job_files(job_id);
 `);
+
+// Migration: add columns if they don't exist on older db instances
+try {
+  db.prepare('ALTER TABLE jobs ADD COLUMN total_files INTEGER DEFAULT 1').run();
+} catch {}
+try {
+  db.prepare('ALTER TABLE jobs ADD COLUMN total_pages INTEGER DEFAULT 1').run();
+} catch {}
+
+// Legacy migration: ensure any existing jobs have entries in job_files
+try {
+  const legacyJobs = db.prepare(`
+    SELECT j.* FROM jobs j
+    LEFT JOIN job_files jf ON j.id = jf.job_id
+    WHERE jf.id IS NULL
+  `).all() as any[];
+
+  for (const lj of legacyJobs) {
+    db.prepare(`
+      INSERT OR IGNORE INTO job_files (
+        id, job_id, original_filename, stored_filename, file_path, file_size,
+        mime_type, page_count, color_mode, sides, orientation, copies,
+        page_range, effective_pages, estimated_cost, file_index, status,
+        cups_job_id, printed_at
+      ) VALUES (
+        ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?,
+        ?, ?
+      )
+    `).run(
+      `file_${lj.id}_0`,
+      lj.id,
+      lj.original_filename || 'document.pdf',
+      lj.stored_filename || '',
+      lj.file_path || '',
+      lj.file_size || 0,
+      lj.mime_type || 'application/pdf',
+      lj.page_count || 1,
+      lj.color_mode || 'bw',
+      lj.sides || 'single',
+      lj.orientation || 'auto',
+      lj.copies || 1,
+      lj.page_range || 'all',
+      lj.effective_pages || 1,
+      lj.estimated_cost || 0,
+      0,
+      lj.status || 'pending',
+      lj.cups_job_id || null,
+      lj.printed_at || null
+    );
+  }
+} catch {}
 
 // Seed default settings if empty
 const insertSetting = db.prepare('INSERT OR IGNORE INTO pricing_settings (key, value) VALUES (?, ?)');
@@ -310,37 +390,173 @@ export function getNextToken(): string {
   return `#P-${seq}`;
 }
 
-export function insertJob(job: PrintJob): PrintJob {
-  const stmt = db.prepare(`
+export function getJobFiles(jobId: string): JobFile[] {
+  return db.prepare('SELECT * FROM job_files WHERE job_id = ? ORDER BY file_index ASC').all(jobId) as JobFile[];
+}
+
+export function getJobFileById(fileId: string): JobFile | undefined {
+  return db.prepare('SELECT * FROM job_files WHERE id = ?').get(fileId) as JobFile | undefined;
+}
+
+export function insertJobWithFiles(job: PrintJob, files: JobFile[]): PrintJob {
+  const totalFiles = files.length > 0 ? files.length : 1;
+  const totalPages = files.reduce((sum, f) => sum + (f.page_count * f.copies), 0);
+  const totalCost = files.reduce((sum, f) => sum + f.estimated_cost, 0);
+
+  const insertJobStmt = db.prepare(`
     INSERT INTO jobs (
       id, token, customer_name, original_filename, stored_filename, file_path,
       file_size, mime_type, page_count, color_mode, sides, orientation,
       copies, page_range, effective_pages, estimated_cost, status,
-      created_at, printed_at, printer_name, cups_job_id
+      created_at, printed_at, printer_name, cups_job_id, total_files, total_pages
     ) VALUES (
       @id, @token, @customer_name, @original_filename, @stored_filename, @file_path,
       @file_size, @mime_type, @page_count, @color_mode, @sides, @orientation,
       @copies, @page_range, @effective_pages, @estimated_cost, @status,
-      @created_at, @printed_at, @printer_name, @cups_job_id
+      @created_at, @printed_at, @printer_name, @cups_job_id, @total_files, @total_pages
     )
   `);
 
-  stmt.run({
-    ...job,
-    printed_at: job.printed_at || null,
-    printer_name: job.printer_name || null,
-    cups_job_id: job.cups_job_id || null,
+  const insertFileStmt = db.prepare(`
+    INSERT INTO job_files (
+      id, job_id, original_filename, stored_filename, file_path, file_size,
+      mime_type, page_count, color_mode, sides, orientation, copies,
+      page_range, effective_pages, estimated_cost, file_index, status,
+      cups_job_id, printed_at
+    ) VALUES (
+      @id, @job_id, @original_filename, @stored_filename, @file_path, @file_size,
+      @mime_type, @page_count, @color_mode, @sides, @orientation, @copies,
+      @page_range, @effective_pages, @estimated_cost, @file_index, @status,
+      @cups_job_id, @printed_at
+    )
+  `);
+
+  const tx = db.transaction(() => {
+    insertJobStmt.run({
+      ...job,
+      total_files: totalFiles,
+      total_pages: totalPages || job.page_count || 1,
+      estimated_cost: totalCost || job.estimated_cost || 0,
+      printed_at: job.printed_at || null,
+      printer_name: job.printer_name || null,
+      cups_job_id: job.cups_job_id || null,
+    });
+
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      insertFileStmt.run({
+        ...f,
+        file_index: i,
+        status: f.status || 'pending',
+        cups_job_id: f.cups_job_id || null,
+        printed_at: f.printed_at || null,
+      });
+    }
   });
 
-  return job;
+  tx();
+  return getJobById(job.id)!;
+}
+
+export function insertJob(job: PrintJob): PrintJob {
+  if (job.files && job.files.length > 0) {
+    return insertJobWithFiles(job, job.files);
+  }
+
+  // Create single file entry for backward compatibility
+  const file: JobFile = {
+    id: `file_${job.id}_0`,
+    job_id: job.id,
+    original_filename: job.original_filename,
+    stored_filename: job.stored_filename,
+    file_path: job.file_path,
+    file_size: job.file_size,
+    mime_type: job.mime_type,
+    page_count: job.page_count,
+    color_mode: job.color_mode,
+    sides: job.sides,
+    orientation: job.orientation,
+    copies: job.copies,
+    page_range: job.page_range,
+    effective_pages: job.effective_pages,
+    estimated_cost: job.estimated_cost,
+    file_index: 0,
+    status: job.status,
+    cups_job_id: job.cups_job_id,
+    printed_at: job.printed_at,
+  };
+
+  return insertJobWithFiles(job, [file]);
 }
 
 export function getAllJobs(): PrintJob[] {
-  return db.prepare('SELECT * FROM jobs ORDER BY created_at DESC').all() as PrintJob[];
+  const jobs = db.prepare('SELECT * FROM jobs ORDER BY created_at DESC').all() as PrintJob[];
+  const allFiles = db.prepare('SELECT * FROM job_files ORDER BY file_index ASC').all() as JobFile[];
+  const filesByJob = new Map<string, JobFile[]>();
+  for (const f of allFiles) {
+    const list = filesByJob.get(f.job_id) || [];
+    list.push(f);
+    filesByJob.set(f.job_id, list);
+  }
+
+  return jobs.map((j) => {
+    const files = filesByJob.get(j.id) || [];
+    return {
+      ...j,
+      files,
+      total_files: j.total_files || (files.length > 0 ? files.length : 1),
+      total_pages: j.total_pages || (files.length > 0 ? files.reduce((s, f) => s + (f.page_count * f.copies), 0) : j.page_count),
+    };
+  });
 }
 
 export function getJobById(id: string): PrintJob | undefined {
-  return db.prepare('SELECT * FROM jobs WHERE id = ?').get(id) as PrintJob | undefined;
+  const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id) as PrintJob | undefined;
+  if (!job) return undefined;
+  const files = getJobFiles(id);
+  return {
+    ...job,
+    files,
+    total_files: job.total_files || (files.length > 0 ? files.length : 1),
+    total_pages: job.total_pages || (files.length > 0 ? files.reduce((s, f) => s + (f.page_count * f.copies), 0) : job.page_count),
+  };
+}
+
+export function updateJobFile(fileId: string, updates: Partial<JobFile>): JobFile | undefined {
+  const current = getJobFileById(fileId);
+  if (!current) return undefined;
+  const merged = { ...current, ...updates };
+
+  db.prepare(`
+    UPDATE job_files SET
+      color_mode = @color_mode,
+      sides = @sides,
+      orientation = @orientation,
+      copies = @copies,
+      page_range = @page_range,
+      effective_pages = @effective_pages,
+      estimated_cost = @estimated_cost,
+      status = @status,
+      cups_job_id = @cups_job_id,
+      printed_at = @printed_at
+    WHERE id = @id
+  `).run({
+    ...merged,
+    cups_job_id: merged.cups_job_id || null,
+    printed_at: merged.printed_at || null,
+  });
+
+  // If all files in this job are printed, mark parent job printed as well
+  const siblings = getJobFiles(current.job_id);
+  const allPrinted = siblings.length > 0 && siblings.every((f) => f.status === 'printed');
+  if (allPrinted) {
+    updateJob(current.job_id, {
+      status: 'printed',
+      printed_at: new Date().toISOString(),
+    });
+  }
+
+  return getJobFileById(fileId);
 }
 
 export function updateJob(id: string, updates: Partial<PrintJob>): PrintJob | undefined {
@@ -362,12 +578,16 @@ export function updateJob(id: string, updates: Partial<PrintJob>): PrintJob | un
       status = @status,
       printed_at = @printed_at,
       printer_name = @printer_name,
-      cups_job_id = @cups_job_id
+      cups_job_id = @cups_job_id,
+      total_files = @total_files,
+      total_pages = @total_pages
     WHERE id = @id
   `);
 
   stmt.run({
     ...merged,
+    total_files: merged.total_files || 1,
+    total_pages: merged.total_pages || merged.page_count || 1,
     printed_at: merged.printed_at || null,
     printer_name: merged.printer_name || null,
     cups_job_id: merged.cups_job_id || null,
@@ -377,6 +597,7 @@ export function updateJob(id: string, updates: Partial<PrintJob>): PrintJob | un
 }
 
 export function deleteJob(id: string): boolean {
+  db.prepare('DELETE FROM job_files WHERE job_id = ?').run(id);
   const res = db.prepare('DELETE FROM jobs WHERE id = ?').run(id);
   return res.changes > 0;
 }

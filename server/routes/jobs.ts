@@ -6,6 +6,10 @@ import {
   getAllJobs,
   getJobById,
   insertJob,
+  insertJobWithFiles,
+  getJobFiles,
+  getJobFileById,
+  updateJobFile,
   updateJob,
   deleteJob,
   getNextToken,
@@ -15,18 +19,18 @@ import {
 import { uploadMiddleware, deletePhysicalFile, cleanupExpiredFiles } from '../storageService.js';
 import { detectPageCount } from '../pdfService.js';
 import { calculatePrintCost } from '../../shared/costCalculator.js';
-import { PrintJob, ColorMode, SidesMode, OrientationMode } from '../../shared/types.js';
+import { PrintJob, JobFile, ColorMode, SidesMode, OrientationMode } from '../../shared/types.js';
 
 export function createJobsRouter(broadcast: (message: any) => void) {
   const router = Router();
 
-  // Custom upload middleware with clean JSON error handling
+  // Custom upload middleware supporting both multi-file and single-file uploads with clean JSON error handling
   const handleUpload = (req: Request, res: Response, next: () => void) => {
-    uploadMiddleware.single('file')(req, res, (err: any) => {
+    uploadMiddleware.any()(req, res, (err: any) => {
       if (err) {
         if (err instanceof multer.MulterError) {
           if (err.code === 'LIMIT_FILE_SIZE') {
-            return res.status(400).json({ error: 'File size exceeds maximum allowed limit of 50MB' });
+            return res.status(400).json({ error: 'File size exceeds maximum allowed limit of 100MB' });
           }
           return res.status(400).json({ error: `Upload error: ${err.message}` });
         }
@@ -60,113 +64,209 @@ export function createJobsRouter(broadcast: (message: any) => void) {
     }
   });
 
-  // GET /api/jobs/:id/file - Stream file for in-browser preview
+  // GET /api/jobs/:id/file - Stream first / primary document file
   router.get('/:id/file', (req: Request, res: Response) => {
     try {
       const id = String(req.params.id);
       const job = getJobById(id);
-      if (!job || !job.file_path || !fs.existsSync(job.file_path)) {
+      if (!job) {
+        return res.status(404).json({ error: 'Job not found' });
+      }
+
+      // If job has files array, pick first file, else fallback to job.file_path
+      const targetPath = job.files && job.files.length > 0 ? job.files[0].file_path : job.file_path;
+      const targetName = job.files && job.files.length > 0 ? job.files[0].original_filename : job.original_filename;
+      const targetMime = job.files && job.files.length > 0 ? job.files[0].mime_type : job.mime_type;
+
+      if (!targetPath || !fs.existsSync(targetPath)) {
         return res.status(404).json({ error: 'Document file not found on disk' });
       }
 
-      let contentType = job.mime_type;
-      const ext = path.extname(job.original_filename || job.file_path).toLowerCase();
+      let contentType = targetMime;
+      const ext = path.extname(targetName || targetPath).toLowerCase();
       if (ext === '.pdf') contentType = 'application/pdf';
       else if (ext === '.jpg' || ext === '.jpeg') contentType = 'image/jpeg';
       else if (ext === '.png') contentType = 'image/png';
       else if (ext === '.webp') contentType = 'image/webp';
 
-      const safeAsciiName = path.basename(job.original_filename).replace(/[^\w.-]/g, '_');
+      const safeAsciiName = path.basename(targetName).replace(/[^\w.-]/g, '_');
       res.setHeader('Content-Type', contentType || 'application/octet-stream');
       res.setHeader(
         'Content-Disposition',
-        `inline; filename="${safeAsciiName}"; filename*=UTF-8''${encodeURIComponent(job.original_filename)}`
+        `inline; filename="${safeAsciiName}"; filename*=UTF-8''${encodeURIComponent(targetName)}`
       );
 
-      res.sendFile(path.resolve(job.file_path));
+      res.sendFile(path.resolve(targetPath));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  // POST /api/jobs - Customer uploads a print job
+  // GET /api/jobs/:id/files/:fileId/file - Stream specific document file for in-browser preview
+  router.get('/:id/files/:fileId/file', (req: Request, res: Response) => {
+    try {
+      const fileId = String(req.params.fileId);
+      const file = getJobFileById(fileId);
+      if (!file || !file.file_path || !fs.existsSync(file.file_path)) {
+        return res.status(404).json({ error: 'Document file not found on disk' });
+      }
+
+      let contentType = file.mime_type;
+      const ext = path.extname(file.original_filename || file.file_path).toLowerCase();
+      if (ext === '.pdf') contentType = 'application/pdf';
+      else if (ext === '.jpg' || ext === '.jpeg') contentType = 'image/jpeg';
+      else if (ext === '.png') contentType = 'image/png';
+      else if (ext === '.webp') contentType = 'image/webp';
+
+      const safeAsciiName = path.basename(file.original_filename).replace(/[^\w.-]/g, '_');
+      res.setHeader('Content-Type', contentType || 'application/octet-stream');
+      res.setHeader(
+        'Content-Disposition',
+        `inline; filename="${safeAsciiName}"; filename*=UTF-8''${encodeURIComponent(file.original_filename)}`
+      );
+
+      res.sendFile(path.resolve(file.file_path));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST /api/jobs - Customer uploads print documents (single or multiple files)
   router.post('/', handleUpload, async (req: Request, res: Response) => {
     try {
-      const file = req.file;
-      if (!file) {
-        return res.status(400).json({ error: 'No document file uploaded' });
+      const rawFiles = (req.files as Express.Multer.File[]) || (req.file ? [req.file] : []);
+      if (!rawFiles || rawFiles.length === 0) {
+        return res.status(400).json({ error: 'No document files uploaded' });
       }
 
       const customerName = (req.body.customerName || req.body.customer_name || 'Walk-in Customer').trim();
-      const colorMode: ColorMode = req.body.colorMode === 'color' ? 'color' : 'bw';
-      const sides: SidesMode = req.body.sides === 'duplex' ? 'duplex' : 'single';
-      const orientation: OrientationMode =
+      let masterColorMode: ColorMode = req.body.colorMode === 'color' ? 'color' : 'bw';
+      let masterSides: SidesMode = req.body.sides === 'duplex' ? 'duplex' : 'single';
+      const masterOrientation: OrientationMode =
         req.body.orientation === 'landscape' || req.body.orientation === 'portrait'
           ? req.body.orientation
           : 'auto';
-      const copies = Math.max(1, parseInt(req.body.copies, 10) || 1);
-      const pageRange = (req.body.pageRange || req.body.page_range || 'all').trim();
+      const masterCopies = Math.max(1, parseInt(req.body.copies, 10) || 1);
+      const masterPageRange = (req.body.pageRange || req.body.page_range || 'all').trim();
 
-      // Detect total pages in document using authoritative server inspection
-      let totalPages = await detectPageCount(file.path, file.mimetype);
-      // Only if server detection could not determine pages (> 1) and client provided a positive count hint
-      if (totalPages <= 1 && req.body.pageCount) {
-        const clientCount = parseInt(req.body.pageCount, 10);
-        if (!isNaN(clientCount) && clientCount > 1) {
-          totalPages = clientCount;
+      // Optional per-file custom settings
+      let customFileOptions: any[] = [];
+      try {
+        if (req.body.fileOptions) {
+          customFileOptions = typeof req.body.fileOptions === 'string'
+            ? JSON.parse(req.body.fileOptions)
+            : req.body.fileOptions;
         }
-      }
+      } catch {}
 
-      // Calculate cost using lowest available active printer pricing
       const pricing = getEffectivePricing();
-
-      // Sanitize color and duplex against active printer capabilities
-      let finalColorMode: ColorMode = colorMode;
-      let finalSides: SidesMode = sides;
-      if (!pricing.color_available && finalColorMode === 'color') {
-        finalColorMode = 'bw';
+      if (!pricing.color_available && masterColorMode === 'color') {
+        masterColorMode = 'bw';
       }
-      if (!pricing.duplex_available && finalSides === 'duplex') {
-        finalSides = 'single';
+      if (!pricing.duplex_available && masterSides === 'duplex') {
+        masterSides = 'single';
       }
 
-      const costResult = calculatePrintCost({
-        totalPages,
-        pageRange,
-        colorMode: finalColorMode,
-        sides: finalSides,
-        copies,
-        pricing,
-      });
-
+      const jobId = `job_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
       const token = getNextToken();
-      const id = `job_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
 
+      const jobFiles: JobFile[] = [];
+      let totalPages = 0;
+      let totalEstimatedCost = 0;
+
+      for (let i = 0; i < rawFiles.length; i++) {
+        const file = rawFiles[i];
+        const customOpt = customFileOptions[i] || {};
+
+        let fColorMode: ColorMode = (customOpt.colorMode || customOpt.color_mode || masterColorMode) === 'color' ? 'color' : 'bw';
+        let fSides: SidesMode = (customOpt.sides || masterSides) === 'duplex' ? 'duplex' : 'single';
+        const fOrientation: OrientationMode = customOpt.orientation || masterOrientation;
+        const fCopies = Math.max(1, parseInt(customOpt.copies || masterCopies, 10) || 1);
+        const fPageRange = (customOpt.pageRange || customOpt.page_range || masterPageRange || 'all').trim();
+
+        if (!pricing.color_available && fColorMode === 'color') {
+          fColorMode = 'bw';
+        }
+        if (!pricing.duplex_available && fSides === 'duplex') {
+          fSides = 'single';
+        }
+
+        // Authoritative page count inspection
+        let filePages = await detectPageCount(file.path, file.mimetype);
+        if (filePages <= 1 && customOpt.pageCount) {
+          const clientCount = parseInt(customOpt.pageCount, 10);
+          if (!isNaN(clientCount) && clientCount > 1) {
+            filePages = clientCount;
+          }
+        }
+
+        const costResult = calculatePrintCost({
+          totalPages: filePages,
+          pageRange: fPageRange,
+          colorMode: fColorMode,
+          sides: fSides,
+          copies: fCopies,
+          pricing,
+        });
+
+        const jFile: JobFile = {
+          id: `file_${jobId}_${i}`,
+          job_id: jobId,
+          original_filename: file.originalname,
+          stored_filename: file.filename,
+          file_path: file.path,
+          file_size: file.size,
+          mime_type: file.mimetype,
+          page_count: filePages,
+          color_mode: fColorMode,
+          sides: fSides,
+          orientation: fOrientation,
+          copies: fCopies,
+          page_range: fPageRange,
+          effective_pages: costResult.effectivePages,
+          estimated_cost: costResult.totalCost,
+          file_index: i,
+          status: 'pending',
+          cups_job_id: null,
+          printed_at: null,
+        };
+
+        jobFiles.push(jFile);
+        totalPages += (filePages * fCopies);
+        totalEstimatedCost += costResult.totalCost;
+      }
+
+      const primaryFile = jobFiles[0];
       const newJob: PrintJob = {
-        id,
+        id: jobId,
         token,
         customer_name: customerName,
-        original_filename: file.originalname,
-        stored_filename: file.filename,
-        file_path: file.path,
-        file_size: file.size,
-        mime_type: file.mimetype,
+        original_filename: rawFiles.length === 1
+          ? primaryFile.original_filename
+          : `${primaryFile.original_filename} (+${rawFiles.length - 1} more)`,
+        stored_filename: primaryFile.stored_filename,
+        file_path: primaryFile.file_path,
+        file_size: rawFiles.reduce((sum, f) => sum + f.size, 0),
+        mime_type: primaryFile.mime_type,
         page_count: totalPages,
-        color_mode: finalColorMode,
-        sides: finalSides,
-        orientation,
-        copies,
-        page_range: pageRange,
-        effective_pages: costResult.effectivePages,
-        estimated_cost: costResult.totalCost,
+        color_mode: masterColorMode,
+        sides: masterSides,
+        orientation: masterOrientation,
+        copies: masterCopies,
+        page_range: masterPageRange,
+        effective_pages: totalPages,
+        estimated_cost: totalEstimatedCost,
         status: 'pending',
         created_at: new Date().toISOString(),
         printed_at: null,
         printer_name: null,
         cups_job_id: null,
+        files: jobFiles,
+        total_files: jobFiles.length,
+        total_pages: totalPages,
       };
 
-      insertJob(newJob);
+      insertJobWithFiles(newJob, jobFiles);
 
       // Real-time broadcast to all connected Admin PCs
       broadcast({
@@ -177,14 +277,69 @@ export function createJobsRouter(broadcast: (message: any) => void) {
       res.status(201).json({
         success: true,
         job: newJob,
-        costBreakdown: costResult,
+        totalCost: totalEstimatedCost,
       });
     } catch (err: any) {
       console.error('[JobsRoute] Upload error:', err);
-      if (req.file?.path) {
-        deletePhysicalFile(req.file.path);
+      const rawFiles = (req.files as Express.Multer.File[]) || (req.file ? [req.file] : []);
+      for (const f of rawFiles) {
+        if (f?.path) deletePhysicalFile(f.path);
       }
       res.status(500).json({ error: err.message || 'Failed to submit print job' });
+    }
+  });
+
+  // PATCH /api/jobs/:id/files/:fileId - Update specific file print options
+  router.patch('/:id/files/:fileId', (req: Request, res: Response) => {
+    try {
+      const id = String(req.params.id);
+      const fileId = String(req.params.fileId);
+      const existingFile = getJobFileById(fileId);
+      if (!existingFile || existingFile.job_id !== id) {
+        return res.status(404).json({ error: 'File not found in this job' });
+      }
+
+      const updates: Partial<JobFile> = {};
+      if (req.body.color_mode) updates.color_mode = req.body.color_mode;
+      if (req.body.sides) updates.sides = req.body.sides;
+      if (req.body.orientation) updates.orientation = req.body.orientation;
+      if (req.body.copies) updates.copies = Math.max(1, parseInt(req.body.copies, 10));
+      if (req.body.page_range !== undefined) updates.page_range = req.body.page_range;
+      if (req.body.status) updates.status = req.body.status;
+
+      // Recalculate file cost
+      const pricing = getEffectivePricing();
+      const costResult = calculatePrintCost({
+        totalPages: existingFile.page_count,
+        pageRange: updates.page_range ?? existingFile.page_range,
+        colorMode: updates.color_mode ?? existingFile.color_mode,
+        sides: updates.sides ?? existingFile.sides,
+        copies: updates.copies ?? existingFile.copies,
+        pricing,
+      });
+      updates.effective_pages = costResult.effectivePages;
+      updates.estimated_cost = costResult.totalCost;
+
+      const updatedFile = updateJobFile(fileId, updates);
+
+      // Recalculate parent job total cost
+      const allFiles = getJobFiles(id);
+      const newTotalCost = allFiles.reduce((s, f) => s + f.estimated_cost, 0);
+      const newTotalPages = allFiles.reduce((s, f) => s + (f.page_count * f.copies), 0);
+      updateJob(id, {
+        estimated_cost: newTotalCost,
+        total_pages: newTotalPages,
+      });
+
+      const updatedJob = getJobById(id);
+      broadcast({
+        type: 'JOB_UPDATED',
+        job: updatedJob,
+      });
+
+      res.json({ success: true, file: updatedFile, job: updatedJob });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 
@@ -247,7 +402,7 @@ export function createJobsRouter(broadcast: (message: any) => void) {
     }
   });
 
-  // DELETE /api/jobs/:id - Delete job and unlink file
+  // DELETE /api/jobs/:id - Delete job and unlink all associated files
   router.delete('/:id', (req: Request, res: Response) => {
     try {
       const id = String(req.params.id);
@@ -259,6 +414,11 @@ export function createJobsRouter(broadcast: (message: any) => void) {
       if (existing.file_path) {
         deletePhysicalFile(existing.file_path);
       }
+      if (existing.files && Array.isArray(existing.files)) {
+        for (const f of existing.files) {
+          if (f.file_path) deletePhysicalFile(f.file_path);
+        }
+      }
 
       deleteJob(id);
 
@@ -267,7 +427,7 @@ export function createJobsRouter(broadcast: (message: any) => void) {
         id,
       });
 
-      res.json({ success: true, message: 'Job and associated file deleted' });
+      res.json({ success: true, message: 'Job and all associated files deleted' });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

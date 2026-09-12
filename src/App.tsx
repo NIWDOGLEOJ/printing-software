@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { CustomerPortal } from './components/CustomerPortal.js';
 import { AdminDashboard } from './components/AdminDashboard.js';
+import { LoginPage } from './components/LoginPage.js';
+import { fetchCurrentUser, logout } from './api.js';
+import { AuthUser } from './types.js';
 
 export const App: React.FC = () => {
   // Determine current view from pathname or query param
@@ -14,6 +17,20 @@ export const App: React.FC = () => {
     }
     return 'upload';
   });
+
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
+  const [isCheckingAuth, setIsCheckingAuth] = useState(true);
+
+  useEffect(() => {
+    fetchCurrentUser()
+      .then((user) => {
+        setCurrentUser(user);
+      })
+      .catch(() => {})
+      .finally(() => {
+        setIsCheckingAuth(false);
+      });
+  }, []);
 
   useEffect(() => {
     const handlePopState = () => {
@@ -36,17 +53,43 @@ export const App: React.FC = () => {
     window.history.pushState({}, '', newPath);
   };
 
+  const handleLogout = async () => {
+    await logout();
+    setCurrentUser(null);
+  };
+
   return (
     <div className="min-h-screen">
       {view === 'admin' ? (
-        <AdminDashboard onSwitchToCustomerView={() => navigateTo('upload')} />
+        isCheckingAuth ? (
+          <div className="min-h-screen flex items-center justify-center bg-slate-100 font-mono text-xs text-slate-500">
+            <div className="flex items-center gap-2">
+              <svg className="animate-spin h-4 w-4 text-emerald-600" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+              </svg>
+              Verifying session...
+            </div>
+          </div>
+        ) : currentUser ? (
+          <AdminDashboard
+            currentUser={currentUser}
+            onLogout={handleLogout}
+            onSwitchToCustomerView={() => navigateTo('upload')}
+          />
+        ) : (
+          <LoginPage
+            onLoginSuccess={(user) => setCurrentUser(user)}
+            onBackToCustomerView={() => navigateTo('upload')}
+          />
+        )
       ) : (
         <div className="relative">
           {/* Subtle admin entry trigger in customer view */}
           <div className="absolute top-2 right-2 sm:top-4 sm:right-4 z-20">
             <button
               onClick={() => navigateTo('admin')}
-              className="text-[11px] font-bold text-slate-400 hover:text-slate-800 bg-white/80 hover:bg-white px-2.5 py-1 rounded-lg border border-slate-200 shadow-xs transition"
+              className="text-[11px] font-bold text-slate-400 hover:text-slate-800 bg-white/80 hover:bg-white px-2.5 py-1 rounded-lg border border-slate-200 shadow-xs transition cursor-pointer"
             >
               Shop PC Login
             </button>

@@ -15,9 +15,11 @@
     "test": "vitest run --fileParallelism=false"
   },
   "dependencies": {
+    "bcryptjs": "^3.0.3",
     "better-sqlite3": "^11.8.1",
     "cors": "^2.8.5",
     "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.3",
     "lucide-react": "^0.460.0",
     "multer": "1.4.5-lts.2",
     "pdf-lib": "^1.17.1",
@@ -27,9 +29,11 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^3.0.0",
     "@types/better-sqlite3": "^7.6.12",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/multer": "^1.4.12",
     "@types/node": "^22.10.1",
     "@types/qrcode": "^1.5.5",

@@ -3,6 +3,28 @@ export type SidesMode = 'single' | 'duplex';
 export type OrientationMode = 'portrait' | 'landscape' | 'auto';
 export type JobStatus = 'pending' | 'printing' | 'printed' | 'cancelled';
 
+export interface JobFile {
+  id: string;
+  job_id: string;
+  original_filename: string;
+  stored_filename: string;
+  file_path: string;
+  file_size: number;
+  mime_type: string;
+  page_count: number;
+  color_mode: ColorMode;
+  sides: SidesMode;
+  orientation: OrientationMode;
+  copies: number;
+  page_range: string;
+  effective_pages: number;
+  estimated_cost: number;
+  file_index: number;
+  status: JobStatus;
+  cups_job_id: string | null;
+  printed_at: string | null;
+}
+
 export interface PrintJob {
   id: string;
   token: string;
@@ -25,6 +47,23 @@ export interface PrintJob {
   printed_at: string | null;
   printer_name: string | null;
   cups_job_id: string | null;
+  files?: JobFile[];
+  total_files?: number;
+  total_pages?: number;
+}
+
+export interface AuthUser {
+  id: string;
+  username: string;
+  name: string;
+  role: string;
+  source: 'billing_db' | 'fallback_admin';
+}
+
+export interface LoginResponse {
+  success: boolean;
+  token: string;
+  user: AuthUser;
 }
 
 export interface PrinterProfile {

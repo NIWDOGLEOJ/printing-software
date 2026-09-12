@@ -53,7 +53,7 @@ export const uploadMiddleware = multer({
   storage: uploadStorage,
   fileFilter,
   limits: {
-    fileSize: 50 * 1024 * 1024, // 50 MB max
+    fileSize: 100 * 1024 * 1024, // 100 MB max per file
   },
 });
 
@@ -84,6 +84,11 @@ export function cleanupExpiredFiles(): { deletedCount: number; orphanedCount: nu
     for (const job of expiredJobs) {
       if (job.file_path) {
         deletePhysicalFile(job.file_path);
+      }
+      if (job.files && Array.isArray(job.files)) {
+        for (const f of job.files) {
+          if (f.file_path) deletePhysicalFile(f.file_path);
+        }
       }
       deleteJob(job.id);
       deletedCount++;

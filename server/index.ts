@@ -11,6 +11,7 @@ import { createPrintersRouter } from './routes/printers.js';
 import { createShopRouter } from './routes/shop.js';
 import { createSettingsRouter } from './routes/settings.js';
 import { createTunnelRouter } from './routes/tunnel.js';
+import { createAuthRouter } from './routes/auth.js';
 import { initRetentionScheduler } from './storageService.js';
 import { initPrinterDiscoveryScheduler } from './printerDiscoveryService.js';
 import { setServerPort, getLocalIpAddresses } from './tunnelService.js';
@@ -63,6 +64,7 @@ wss.on('connection', (ws) => {
 });
 
 // API Routes
+app.use('/api/auth', createAuthRouter());
 app.use('/api/jobs', createJobsRouter(broadcast));
 app.use('/api/printers', createPrintersRouter(broadcast));
 app.use('/api/shop', createShopRouter());

@@ -7,6 +7,9 @@ import {
   PrinterProfile,
   EffectivePricing,
   DiscoveredPrinter,
+  JobFile,
+  AuthUser,
+  LoginResponse,
 } from './types.js';
 
 const API_BASE = '/api';
@@ -304,3 +307,121 @@ export function connectLiveWebSocket(
     if (socket) socket.close();
   };
 }
+
+// Token Storage Helpers
+const TOKEN_KEY = 'print_auth_token';
+
+export function getStoredToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+export function setStoredToken(token: string): void {
+  localStorage.setItem(TOKEN_KEY, token);
+}
+
+export function clearStoredToken(): void {
+  localStorage.removeItem(TOKEN_KEY);
+}
+
+// Authentication API
+export async function login(username: string, password: string): Promise<LoginResponse> {
+  const res = await fetch(`${API_BASE}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.error || 'Authentication failed');
+  }
+  const data: LoginResponse = await res.json();
+  if (data.token) {
+    setStoredToken(data.token);
+  }
+  return data;
+}
+
+export async function fetchCurrentUser(): Promise<AuthUser | null> {
+  const token = getStoredToken();
+  if (!token) return null;
+
+  try {
+    const res = await fetch(`${API_BASE}/auth/me`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    if (!res.ok) {
+      clearStoredToken();
+      return null;
+    }
+    const data = await res.json();
+    return data.user || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function logout(): Promise<void> {
+  const token = getStoredToken();
+  if (token) {
+    try {
+      await fetch(`${API_BASE}/auth/logout`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+    } catch {}
+  }
+  clearStoredToken();
+}
+
+// File Preview & Per-File Operations
+export function getFilePreviewUrl(jobId: string, fileId?: string): string {
+  if (fileId) {
+    return `${API_BASE}/jobs/${jobId}/files/${fileId}/file`;
+  }
+  return `${API_BASE}/jobs/${jobId}/file`;
+}
+
+export async function printJobFile(
+  fileId: string,
+  options: {
+    printerName?: string;
+    copies?: number;
+    colorMode?: string;
+    sides?: string;
+    orientation?: string;
+    pageRange?: string;
+  }
+): Promise<{ success: boolean; message: string; cupsJobId: string; printerName: string; file: JobFile; job: PrintJob }> {
+  const res = await fetch(`${API_BASE}/printers/print-file/${fileId}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(options),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.error || 'Failed to print document file');
+  }
+  return res.json();
+}
+
+export async function updateJobFileOptions(
+  jobId: string,
+  fileId: string,
+  updates: Partial<JobFile>
+): Promise<{ success: boolean; file: JobFile; job: PrintJob }> {
+  const res = await fetch(`${API_BASE}/jobs/${jobId}/files/${fileId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to update file options');
+  }
+  return res.json();
+}
+

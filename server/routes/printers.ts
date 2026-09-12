@@ -18,6 +18,9 @@ import {
   deletePrinterProfile,
   getEffectivePricing,
   seedDefaultPrinterProfiles,
+  getJobFiles,
+  getJobFileById,
+  updateJobFile,
 } from '../db.js';
 import { calculatePrintCost } from '../../shared/costCalculator.js';
 import { ColorMode, SidesMode, OrientationMode } from '../../shared/types.js';
@@ -263,7 +266,7 @@ export function createPrintersRouter(broadcast: (message: any) => void) {
     }
   });
 
-  // POST /api/printers/print/:id - Print a specific document job
+  // POST /api/printers/print/:id - Print a specific document job (all files if multi-document)
   router.post('/print/:id', async (req: Request, res: Response) => {
     try {
       const id = String(req.params.id);
@@ -281,22 +284,143 @@ export function createPrintersRouter(broadcast: (message: any) => void) {
         pageRange,
       } = req.body;
 
+      const pricing = getEffectivePricing();
+      const filesToPrint = (job.files && job.files.length > 0)
+        ? job.files
+        : [{
+            id: `file_${job.id}_0`,
+            job_id: job.id,
+            original_filename: job.original_filename,
+            stored_filename: job.stored_filename,
+            file_path: job.file_path,
+            file_size: job.file_size,
+            mime_type: job.mime_type,
+            page_count: job.page_count,
+            color_mode: job.color_mode,
+            sides: job.sides,
+            orientation: job.orientation,
+            copies: job.copies,
+            page_range: job.page_range,
+            effective_pages: job.effective_pages,
+            estimated_cost: job.estimated_cost,
+            file_index: 0,
+            status: job.status,
+            cups_job_id: job.cups_job_id,
+            printed_at: job.printed_at,
+          }];
+
+      const cupsIds: string[] = [];
+      let lastPrinterName = '';
+
+      for (const file of filesToPrint) {
+        const fileOpts = {
+          printerName: printerName || job.printer_name || undefined,
+          copies: copies !== undefined ? Number(copies) : file.copies,
+          colorMode: (colorMode || file.color_mode) as ColorMode,
+          sides: (sides || file.sides) as SidesMode,
+          orientation: (orientation || file.orientation) as OrientationMode,
+          pageRange: pageRange !== undefined ? String(pageRange) : file.page_range,
+        };
+
+        const result = await printFile(file.file_path, fileOpts);
+        cupsIds.push(result.cupsJobId);
+        lastPrinterName = result.printerName;
+
+        const costResult = calculatePrintCost({
+          totalPages: file.page_count,
+          pageRange: fileOpts.pageRange,
+          colorMode: fileOpts.colorMode,
+          sides: fileOpts.sides,
+          copies: fileOpts.copies,
+          pricing,
+        });
+
+        if (job.files && job.files.length > 0) {
+          updateJobFile(file.id, {
+            status: 'printed',
+            printed_at: new Date().toISOString(),
+            cups_job_id: result.cupsJobId,
+            copies: fileOpts.copies,
+            color_mode: fileOpts.colorMode,
+            sides: fileOpts.sides,
+            orientation: fileOpts.orientation,
+            page_range: fileOpts.pageRange,
+            effective_pages: costResult.effectivePages,
+            estimated_cost: costResult.totalCost,
+          });
+        }
+      }
+
+      // Update parent job
+      const allFiles = getJobFiles(job.id);
+      const totalCost = allFiles.length > 0 ? allFiles.reduce((s, f) => s + f.estimated_cost, 0) : job.estimated_cost;
+      const totalPages = allFiles.length > 0 ? allFiles.reduce((s, f) => s + (f.page_count * f.copies), 0) : job.page_count;
+
+      updateJob(job.id, {
+        status: 'printed',
+        printed_at: new Date().toISOString(),
+        printer_name: lastPrinterName,
+        cups_job_id: cupsIds.join(', '),
+        estimated_cost: totalCost,
+        total_pages: totalPages,
+      });
+
+      const updated = getJobById(job.id)!;
+
+      broadcast({
+        type: 'JOB_UPDATED',
+        job: updated,
+      });
+
+      res.json({
+        success: true,
+        message: `Successfully printed ${filesToPrint.length} document(s) on ${lastPrinterName}`,
+        cupsJobId: cupsIds.join(', '),
+        printerName: lastPrinterName,
+        job: updated,
+      });
+    } catch (err: any) {
+      console.error('[PrintersRoute] Print error:', err);
+      res.status(500).json({ error: err.message || 'Failed to dispatch print job' });
+    }
+  });
+
+  // POST /api/printers/print-file/:fileId - Print a single file from a multi-document job
+  router.post('/print-file/:fileId', async (req: Request, res: Response) => {
+    try {
+      const fileId = String(req.params.fileId);
+      const file = getJobFileById(fileId);
+      if (!file) {
+        return res.status(404).json({ error: 'File not found' });
+      }
+      const job = getJobById(file.job_id);
+      if (!job) {
+        return res.status(404).json({ error: 'Associated job not found' });
+      }
+
+      const {
+        printerName,
+        copies,
+        colorMode,
+        sides,
+        orientation,
+        pageRange,
+      } = req.body;
+
       const printOptions = {
         printerName: printerName || job.printer_name || undefined,
-        copies: copies !== undefined ? Number(copies) : job.copies,
-        colorMode: (colorMode || job.color_mode) as ColorMode,
-        sides: (sides || job.sides) as SidesMode,
-        orientation: (orientation || job.orientation) as OrientationMode,
-        pageRange: pageRange !== undefined ? String(pageRange) : job.page_range,
+        copies: copies !== undefined ? Number(copies) : file.copies,
+        colorMode: (colorMode || file.color_mode) as ColorMode,
+        sides: (sides || file.sides) as SidesMode,
+        orientation: (orientation || file.orientation) as OrientationMode,
+        pageRange: pageRange !== undefined ? String(pageRange) : file.page_range,
       };
 
-      // Dispatch to CUPS or Mock printer
-      const result = await printFile(job.file_path, printOptions);
+      const result = await printFile(file.file_path, printOptions);
 
-      // Recalculate cost with final dispatch options
       const pricing = getEffectivePricing();
       const costResult = calculatePrintCost({
-        totalPages: job.page_count,
+        totalPages: file.page_count,
         pageRange: printOptions.pageRange,
         colorMode: printOptions.colorMode,
         sides: printOptions.sides,
@@ -304,11 +428,9 @@ export function createPrintersRouter(broadcast: (message: any) => void) {
         pricing,
       });
 
-      // Update job state in DB
-      const updated = updateJob(job.id, {
+      const updatedFile = updateJobFile(fileId, {
         status: 'printed',
         printed_at: new Date().toISOString(),
-        printer_name: result.printerName,
         cups_job_id: result.cupsJobId,
         copies: printOptions.copies,
         color_mode: printOptions.colorMode,
@@ -319,9 +441,26 @@ export function createPrintersRouter(broadcast: (message: any) => void) {
         estimated_cost: costResult.totalCost,
       });
 
+      // Update parent job status if all files printed
+      const allFiles = getJobFiles(job.id);
+      const allPrinted = allFiles.length > 0 && allFiles.every((f) => f.status === 'printed');
+      const newTotalCost = allFiles.reduce((s, f) => s + f.estimated_cost, 0);
+      const newTotalPages = allFiles.reduce((s, f) => s + (f.page_count * f.copies), 0);
+
+      updateJob(job.id, {
+        status: allPrinted ? 'printed' : job.status,
+        printed_at: allPrinted ? new Date().toISOString() : job.printed_at,
+        printer_name: result.printerName,
+        cups_job_id: result.cupsJobId,
+        estimated_cost: newTotalCost,
+        total_pages: newTotalPages,
+      });
+
+      const updatedJob = getJobById(job.id)!;
+
       broadcast({
         type: 'JOB_UPDATED',
-        job: updated,
+        job: updatedJob,
       });
 
       res.json({
@@ -329,11 +468,12 @@ export function createPrintersRouter(broadcast: (message: any) => void) {
         message: result.message,
         cupsJobId: result.cupsJobId,
         printerName: result.printerName,
-        job: updated,
+        file: updatedFile,
+        job: updatedJob,
       });
     } catch (err: any) {
-      console.error('[PrintersRoute] Print error:', err);
-      res.status(500).json({ error: err.message || 'Failed to dispatch print job' });
+      console.error('[PrintersRoute] Print file error:', err);
+      res.status(500).json({ error: err.message || 'Failed to dispatch file print' });
     }
   });
 
