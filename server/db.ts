@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
-import { PrintJob, JobFile, PricingSettings, PrinterProfile, EffectivePricing } from '../shared/types.js';
+import { PrintJob, JobFile, PricingSettings, PrinterProfile, EffectivePricing, WhatsAppSettings } from '../shared/types.js';
 import { DEFAULT_PRICING, calculateEffectivePricing } from '../shared/costCalculator.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -38,29 +38,32 @@ db.exec(`
   );
 
   CREATE TABLE IF NOT EXISTS jobs (
-    id                TEXT PRIMARY KEY,
-    token             TEXT NOT NULL,
-    customer_name     TEXT NOT NULL,
-    original_filename TEXT NOT NULL,
-    stored_filename   TEXT NOT NULL,
-    file_path         TEXT NOT NULL,
-    file_size         INTEGER NOT NULL,
-    mime_type         TEXT NOT NULL,
-    page_count        INTEGER NOT NULL,
-    color_mode        TEXT NOT NULL,
-    sides             TEXT NOT NULL,
-    orientation       TEXT NOT NULL,
-    copies            INTEGER NOT NULL DEFAULT 1,
-    page_range        TEXT NOT NULL DEFAULT 'all',
-    effective_pages   INTEGER NOT NULL DEFAULT 1,
-    estimated_cost    REAL NOT NULL DEFAULT 0,
-    status            TEXT NOT NULL DEFAULT 'pending',
-    created_at        TEXT NOT NULL,
-    printed_at        TEXT,
-    printer_name      TEXT,
-    cups_job_id       TEXT,
-    total_files       INTEGER NOT NULL DEFAULT 1,
-    total_pages       INTEGER NOT NULL DEFAULT 1
+    id                   TEXT PRIMARY KEY,
+    token                TEXT NOT NULL,
+    customer_name        TEXT NOT NULL,
+    original_filename    TEXT NOT NULL,
+    stored_filename      TEXT NOT NULL,
+    file_path            TEXT NOT NULL,
+    file_size            INTEGER NOT NULL,
+    mime_type            TEXT NOT NULL,
+    page_count           INTEGER NOT NULL,
+    color_mode           TEXT NOT NULL,
+    sides                TEXT NOT NULL,
+    orientation          TEXT NOT NULL,
+    copies               INTEGER NOT NULL DEFAULT 1,
+    page_range           TEXT NOT NULL DEFAULT 'all',
+    effective_pages      INTEGER NOT NULL DEFAULT 1,
+    estimated_cost       REAL NOT NULL DEFAULT 0,
+    status               TEXT NOT NULL DEFAULT 'pending',
+    created_at           TEXT NOT NULL,
+    printed_at           TEXT,
+    printer_name         TEXT,
+    cups_job_id          TEXT,
+    total_files          INTEGER NOT NULL DEFAULT 1,
+    total_pages          INTEGER NOT NULL DEFAULT 1,
+    source               TEXT NOT NULL DEFAULT 'web',
+    whatsapp_jid         TEXT,
+    whatsapp_sender_name TEXT
   );
 
   CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
@@ -98,6 +101,18 @@ try {
 } catch {}
 try {
   db.prepare('ALTER TABLE jobs ADD COLUMN total_pages INTEGER DEFAULT 1').run();
+} catch {}
+try {
+  db.prepare("ALTER TABLE jobs ADD COLUMN source TEXT DEFAULT 'web'").run();
+} catch {}
+try {
+  db.prepare('ALTER TABLE jobs ADD COLUMN whatsapp_jid TEXT').run();
+} catch {}
+try {
+  db.prepare('ALTER TABLE jobs ADD COLUMN whatsapp_sender_name TEXT').run();
+} catch {}
+try {
+  db.prepare('CREATE INDEX IF NOT EXISTS idx_jobs_whatsapp_jid ON jobs(whatsapp_jid)').run();
 } catch {}
 
 // Legacy migration: ensure any existing jobs have entries in job_files
@@ -408,12 +423,14 @@ export function insertJobWithFiles(job: PrintJob, files: JobFile[]): PrintJob {
       id, token, customer_name, original_filename, stored_filename, file_path,
       file_size, mime_type, page_count, color_mode, sides, orientation,
       copies, page_range, effective_pages, estimated_cost, status,
-      created_at, printed_at, printer_name, cups_job_id, total_files, total_pages
+      created_at, printed_at, printer_name, cups_job_id, total_files, total_pages,
+      source, whatsapp_jid, whatsapp_sender_name
     ) VALUES (
       @id, @token, @customer_name, @original_filename, @stored_filename, @file_path,
       @file_size, @mime_type, @page_count, @color_mode, @sides, @orientation,
       @copies, @page_range, @effective_pages, @estimated_cost, @status,
-      @created_at, @printed_at, @printer_name, @cups_job_id, @total_files, @total_pages
+      @created_at, @printed_at, @printer_name, @cups_job_id, @total_files, @total_pages,
+      @source, @whatsapp_jid, @whatsapp_sender_name
     )
   `);
 
@@ -440,6 +457,9 @@ export function insertJobWithFiles(job: PrintJob, files: JobFile[]): PrintJob {
       printed_at: job.printed_at || null,
       printer_name: job.printer_name || null,
       cups_job_id: job.cups_job_id || null,
+      source: job.source || 'web',
+      whatsapp_jid: job.whatsapp_jid || null,
+      whatsapp_sender_name: job.whatsapp_sender_name || null,
     });
 
     for (let i = 0; i < files.length; i++) {
@@ -580,7 +600,10 @@ export function updateJob(id: string, updates: Partial<PrintJob>): PrintJob | un
       printer_name = @printer_name,
       cups_job_id = @cups_job_id,
       total_files = @total_files,
-      total_pages = @total_pages
+      total_pages = @total_pages,
+      source = @source,
+      whatsapp_jid = @whatsapp_jid,
+      whatsapp_sender_name = @whatsapp_sender_name
     WHERE id = @id
   `);
 
@@ -591,9 +614,56 @@ export function updateJob(id: string, updates: Partial<PrintJob>): PrintJob | un
     printed_at: merged.printed_at || null,
     printer_name: merged.printer_name || null,
     cups_job_id: merged.cups_job_id || null,
+    source: merged.source || 'web',
+    whatsapp_jid: merged.whatsapp_jid || null,
+    whatsapp_sender_name: merged.whatsapp_sender_name || null,
   });
 
   return getJobById(id);
+}
+
+export function getJobByToken(token: string): PrintJob | undefined {
+  const cleanToken = token.startsWith('#') ? token : `#${token}`;
+  const job = db.prepare('SELECT * FROM jobs WHERE token = ? OR token = ?').get(token, cleanToken) as PrintJob | undefined;
+  if (!job) return undefined;
+  return getJobById(job.id);
+}
+
+export function getLatestPendingJobByWhatsAppJid(jid: string): PrintJob | undefined {
+  const job = db.prepare(
+    "SELECT * FROM jobs WHERE whatsapp_jid = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1"
+  ).get(jid) as PrintJob | undefined;
+  if (!job) return undefined;
+  return getJobById(job.id);
+}
+
+export function getWhatsAppSettings(): WhatsAppSettings {
+  const rows = db.prepare("SELECT key, value FROM pricing_settings WHERE key LIKE 'whatsapp_%'").all() as { key: string; value: string }[];
+  const map: Record<string, string> = {};
+  for (const r of rows) {
+    map[r.key] = r.value;
+  }
+
+  return {
+    enabled: map['whatsapp_enabled'] === 'true',
+    notifyOnPrint: map['whatsapp_notify_on_print'] !== 'false',
+    notifyOnComplete: map['whatsapp_notify_on_complete'] !== 'false',
+    welcomeEnabled: map['whatsapp_welcome_enabled'] !== 'false',
+    customWelcomeMessage: map['whatsapp_custom_welcome'],
+  };
+}
+
+export function updateWhatsAppSettings(settings: Partial<WhatsAppSettings>): WhatsAppSettings {
+  const upsert = db.prepare('INSERT OR REPLACE INTO pricing_settings (key, value) VALUES (?, ?)');
+  const tx = db.transaction(() => {
+    if (settings.enabled !== undefined) upsert.run('whatsapp_enabled', String(settings.enabled));
+    if (settings.notifyOnPrint !== undefined) upsert.run('whatsapp_notify_on_print', String(settings.notifyOnPrint));
+    if (settings.notifyOnComplete !== undefined) upsert.run('whatsapp_notify_on_complete', String(settings.notifyOnComplete));
+    if (settings.welcomeEnabled !== undefined) upsert.run('whatsapp_welcome_enabled', String(settings.welcomeEnabled));
+    if (settings.customWelcomeMessage !== undefined) upsert.run('whatsapp_custom_welcome', String(settings.customWelcomeMessage));
+  });
+  tx();
+  return getWhatsAppSettings();
 }
 
 export function deleteJob(id: string): boolean {

@@ -5,6 +5,7 @@ import {
   Trash2,
   Eye,
   Check,
+  MessageSquare,
 } from 'lucide-react';
 import { PrintJob } from '../types.js';
 import { formatCurrency, formatFileSize, formatRelativeTime } from '../utils/formatters.js';
@@ -52,6 +53,15 @@ export const JobCard: React.FC<JobCardProps> = ({
           >
             {job.token}
           </span>
+          {job.source === 'whatsapp' && (
+            <span
+              title="Submitted via WhatsApp"
+              className="px-1.5 py-0.5 rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 text-[10px] font-bold flex items-center gap-1 shrink-0"
+            >
+              <MessageSquare className="w-3 h-3 fill-emerald-500/20" />
+              WA
+            </span>
+          )}
           <h3 className="font-bold text-[var(--ink)] text-base truncate">
             {job.customer_name}
           </h3>

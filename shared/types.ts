@@ -25,6 +25,8 @@ export interface JobFile {
   printed_at: string | null;
 }
 
+export type JobSource = 'web' | 'whatsapp';
+
 export interface PrintJob {
   id: string;
   token: string;
@@ -50,6 +52,9 @@ export interface PrintJob {
   files?: JobFile[];
   total_files?: number;
   total_pages?: number;
+  source?: JobSource;
+  whatsapp_jid?: string | null;
+  whatsapp_sender_name?: string | null;
 }
 
 export interface AuthUser {
@@ -166,6 +171,23 @@ export interface DiscoveredPrinter {
   lastSeen: string;
 }
 
+export interface WhatsAppStatus {
+  state: 'disconnected' | 'connecting' | 'qr_ready' | 'connected';
+  phoneNumber?: string | null;
+  pushName?: string | null;
+  qrCodeDataUrl?: string | null;
+  lastConnected?: string | null;
+  error?: string | null;
+}
+
+export interface WhatsAppSettings {
+  enabled: boolean;
+  notifyOnPrint: boolean;
+  notifyOnComplete: boolean;
+  welcomeEnabled: boolean;
+  customWelcomeMessage?: string;
+}
+
 export interface WsMessage {
   type:
     | 'CONNECTED'
@@ -179,7 +201,8 @@ export interface WsMessage {
     | 'PRINTER_PROFILES_UPDATED'
     | 'PRICING_UPDATED'
     | 'SETTINGS_UPDATED'
-    | 'TUNNEL_UPDATED';
+    | 'TUNNEL_UPDATED'
+    | 'WHATSAPP_STATUS_UPDATED';
   job?: PrintJob;
   jobId?: string;
   status?: TunnelStatus;
@@ -187,5 +210,6 @@ export interface WsMessage {
   pricing?: PricingSettings;
   printers?: PrinterInfo[];
   discoveredPrinters?: DiscoveredPrinter[];
+  whatsappStatus?: WhatsAppStatus;
   message?: string;
 }

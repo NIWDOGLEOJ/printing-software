@@ -27,7 +27,7 @@ import {
   JobFile,
 } from '../types.js';
 import { PDFDocument } from 'pdf-lib';
-import { fetchShopDetails, fetchSettings, fetchEffectivePricing, uploadJob, connectLiveWebSocket } from '../api.js';
+import { fetchShopDetails, fetchSettings, fetchEffectivePricing, uploadJob, connectLiveWebSocket, fetchJobByToken } from '../api.js';
 import { calculatePrintCost, DEFAULT_PRICING } from '../utils/costCalculator.js';
 import { formatCurrency, formatFileSize } from '../utils/formatters.js';
 import { useTheme } from '../theme.js';
@@ -101,6 +101,17 @@ export const CustomerPortal: React.FC = () => {
       .catch((e) => console.warn('Could not load shop details', e));
 
     loadEffectivePricing();
+
+    // Check if customer visited via WhatsApp 1-tap link e.g. /?token=P-101
+    const params = new URLSearchParams(window.location.search);
+    const tokenParam = params.get('token');
+    if (tokenParam) {
+      fetchJobByToken(tokenParam)
+        .then((job) => {
+          setSubmittedJob(job);
+        })
+        .catch((e) => console.warn('Could not load job by token:', e));
+    }
   }, []);
 
   // Real-time WebSocket sync

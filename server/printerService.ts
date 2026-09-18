@@ -140,60 +140,86 @@ export async function preparePrintableFile(filePath: string): Promise<{ printabl
   const ext = path.extname(filePath).toLowerCase();
   const isImage = ['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif'].includes(ext);
 
-  if (!isImage) {
-    return { printablePath: filePath, isTemp: false };
-  }
-
   const uploadsDir = path.resolve(process.cwd(), 'uploads');
   if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir, { recursive: true });
   }
-  const tempPdfPath = path.resolve(
-    uploadsDir,
-    `print_temp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.pdf`
-  );
 
-  // 1. Try macOS native sips first for fast conversion (supports WebP, PNG, JPG, etc.)
-  try {
-    await execFileAsync('/usr/bin/sips', ['-s', 'format', 'pdf', filePath, '--out', tempPdfPath]);
-    if (fs.existsSync(tempPdfPath) && fs.statSync(tempPdfPath).size > 0) {
+  // 1. Image normalization into clean single A4 PDF
+  if (isImage) {
+    const tempPdfPath = path.resolve(
+      uploadsDir,
+      `print_temp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.pdf`
+    );
+
+    // Try macOS native sips first for fast conversion (supports WebP, PNG, JPG, etc.)
+    try {
+      await execFileAsync('/usr/bin/sips', ['-s', 'format', 'pdf', filePath, '--out', tempPdfPath]);
+      if (fs.existsSync(tempPdfPath) && fs.statSync(tempPdfPath).size > 0) {
+        return { printablePath: tempPdfPath, isTemp: true };
+      }
+    } catch (err) {
+      // fallback to pdf-lib
+    }
+
+    // Fallback to embedding via pdf-lib for JPG / PNG
+    try {
+      const pdfDoc = await PDFDocument.create();
+      const page = pdfDoc.addPage([595.28, 841.89]); // A4 in points
+      const fileBytes = await fs.promises.readFile(filePath);
+      let embeddedImg;
+      if (ext === '.png') {
+        embeddedImg = await pdfDoc.embedPng(fileBytes);
+      } else {
+        embeddedImg = await pdfDoc.embedJpg(fileBytes);
+      }
+      const { width: imgW, height: imgH } = embeddedImg;
+      const margin = 20;
+      const maxW = 595.28 - margin * 2;
+      const maxH = 841.89 - margin * 2;
+      const scale = Math.min(maxW / imgW, maxH / imgH, 1);
+      const drawW = imgW * scale;
+      const drawH = imgH * scale;
+      page.drawImage(embeddedImg, {
+        x: (595.28 - drawW) / 2,
+        y: (841.89 - drawH) / 2,
+        width: drawW,
+        height: drawH,
+      });
+      const pdfBytes = await pdfDoc.save();
+      await fs.promises.writeFile(tempPdfPath, pdfBytes);
       return { printablePath: tempPdfPath, isTemp: true };
+    } catch (err) {
+      return { printablePath: filePath, isTemp: false };
     }
-  } catch (err) {
-    // fallback to pdf-lib
   }
 
-  // 2. Fallback to embedding via pdf-lib for JPG / PNG
-  try {
-    const pdfDoc = await PDFDocument.create();
-    const page = pdfDoc.addPage([595.28, 841.89]); // A4 in points
-    const fileBytes = await fs.promises.readFile(filePath);
-    let embeddedImg;
-    if (ext === '.png') {
-      embeddedImg = await pdfDoc.embedPng(fileBytes);
-    } else {
-      embeddedImg = await pdfDoc.embedJpg(fileBytes);
+  // 2. PDF normalization (strips Microsoft Word tagged structures & prevents CUPS rasterizer looping)
+  if (ext === '.pdf') {
+    try {
+      const fileBytes = await fs.promises.readFile(filePath);
+      const srcDoc = await PDFDocument.load(fileBytes, { ignoreEncryption: true });
+      const pageCount = srcDoc.getPageCount();
+      if (pageCount > 0) {
+        const normDoc = await PDFDocument.create();
+        const copiedPages = await normDoc.copyPages(srcDoc, srcDoc.getPageIndices());
+        copiedPages.forEach(p => normDoc.addPage(p));
+        const normBytes = await normDoc.save();
+
+        const tempPdfPath = path.resolve(
+          uploadsDir,
+          `print_norm_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.pdf`
+        );
+        await fs.promises.writeFile(tempPdfPath, normBytes);
+        return { printablePath: tempPdfPath, isTemp: true };
+      }
+    } catch (err) {
+      // Fallback to original filePath if normalization encountered an issue
+      return { printablePath: filePath, isTemp: false };
     }
-    const { width: imgW, height: imgH } = embeddedImg;
-    const margin = 20;
-    const maxW = 595.28 - margin * 2;
-    const maxH = 841.89 - margin * 2;
-    const scale = Math.min(maxW / imgW, maxH / imgH, 1);
-    const drawW = imgW * scale;
-    const drawH = imgH * scale;
-    page.drawImage(embeddedImg, {
-      x: (595.28 - drawW) / 2,
-      y: (841.89 - drawH) / 2,
-      width: drawW,
-      height: drawH,
-    });
-    const pdfBytes = await pdfDoc.save();
-    await fs.promises.writeFile(tempPdfPath, pdfBytes);
-    return { printablePath: tempPdfPath, isTemp: true };
-  } catch (err) {
-    // Return original filePath if unable to convert
-    return { printablePath: filePath, isTemp: false };
   }
+
+  return { printablePath: filePath, isTemp: false };
 }
 
 export async function printFile(filePath: string, options: PrintJobOptions): Promise<PrintResult> {
@@ -223,20 +249,21 @@ export async function printFile(filePath: string, options: PrintJobOptions): Pro
     };
   }
 
-  // Prepare printable file (wrapping images in clean single A4 PDF)
+  // Prepare printable file (wrapping images in clean single A4 PDF & normalizing PDFs)
   const { printablePath, isTemp } = await preparePrintableFile(filePath);
 
   try {
     // Real CUPS print execution
     const args: string[] = ['-d', targetPrinter];
 
-    // Fit to page so documents and images scale cleanly within media margins
-    args.push('-o', 'fit-to-page');
+    // Explicit standard media size (A4) - ensures printer matches loaded paper tray without scaling errors
+    args.push('-o', 'media=A4', '-o', 'PageSize=A4');
 
-    // Copies
+    // Copies & Collation
     const copies = Math.max(1, options.copies || 1);
     if (copies > 1) {
       args.push('-n', String(copies));
+      args.push('-o', 'Collate=True');
     }
 
     // Color mode
@@ -248,9 +275,9 @@ export async function printFile(filePath: string, options: PrintJobOptions): Pro
 
     // Sides / Duplex
     if (options.sides === 'duplex') {
-      args.push('-o', 'sides=two-sided-long-edge', '-o', 'Duplex=DuplexNoTumble');
+      args.push('-o', 'Duplex=DuplexNoTumble', '-o', 'sides=two-sided-long-edge', '-o', 'Option1=True');
     } else {
-      args.push('-o', 'sides=one-sided', '-o', 'Duplex=None');
+      args.push('-o', 'Duplex=None', '-o', 'sides=one-sided');
     }
 
     // Orientation

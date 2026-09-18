@@ -12,6 +12,8 @@ import { createShopRouter } from './routes/shop.js';
 import { createSettingsRouter } from './routes/settings.js';
 import { createTunnelRouter } from './routes/tunnel.js';
 import { createAuthRouter } from './routes/auth.js';
+import { createWhatsAppRouter } from './routes/whatsapp.js';
+import { setWhatsAppBroadcast } from './whatsappService.js';
 import { initRetentionScheduler } from './storageService.js';
 import { initPrinterDiscoveryScheduler } from './printerDiscoveryService.js';
 import { setServerPort, getLocalIpAddresses } from './tunnelService.js';
@@ -70,6 +72,9 @@ app.use('/api/printers', createPrintersRouter(broadcast));
 app.use('/api/shop', createShopRouter());
 app.use('/api/settings', createSettingsRouter(broadcast));
 app.use('/api/tunnel', createTunnelRouter(broadcast));
+app.use('/api/whatsapp', createWhatsAppRouter());
+
+setWhatsAppBroadcast(broadcast);
 
 // Static files for production built frontend
 function getDistPath(): string | null {

@@ -7,3 +7,4 @@ uploads/*
 *.db-shm
 *.db-wal
 .DS_Store
+whatsapp-auth

@@ -2,6 +2,17 @@ import React, { useState, useEffect } from 'react';
 import { JobFile, PrintJob, PrinterInfo, ColorMode, SidesMode, OrientationMode, EffectivePricing, PricingSettings } from '../types.js';
 import { getFilePreviewUrl, printJobFile, updateJobFileOptions } from '../api.js';
 import { calculatePrintCost } from '../../shared/costCalculator.js';
+import {
+  MONO,
+  NUM,
+  EYEBROW,
+  PANEL,
+  FIELD,
+  BTN_ACCENT,
+  BTN_SECONDARY,
+  CHIP,
+  inr,
+} from '../lib/design-system.js';
 
 interface FileReviewModalProps {
   job: PrintJob;
@@ -103,35 +114,62 @@ export const FileReviewModal: React.FC<FileReviewModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 animate-in fade-in duration-150">
-      <div className="relative bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-5xl h-[90vh] flex flex-col overflow-hidden">
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 animate-in fade-in duration-150">
+      <div
+        className="relative rounded-2xl w-full max-w-5xl h-[90vh] flex flex-col overflow-hidden shadow-2xl"
+        style={{
+          ...PANEL,
+          boxShadow: '0 12px 40px var(--paper-shadow)',
+        }}
+      >
         {/* Header */}
-        <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50/80">
+        <div
+          className="px-6 py-4 flex items-center justify-between border-b shrink-0"
+          style={{
+            background: 'var(--sub)',
+            borderColor: 'var(--border)',
+          }}
+        >
           <div className="flex items-center gap-3 min-w-0">
-            <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold text-lg shrink-0">
+            <div
+              className="w-10 h-10 rounded-xl flex items-center justify-center font-bold text-lg shrink-0 border"
+              style={{
+                background: 'var(--panel)',
+                borderColor: 'var(--border2)',
+              }}
+            >
               {isPdf ? '📄' : isImage ? '🖼️' : '📁'}
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <h3 className="text-base font-bold text-slate-900 truncate" title={file.original_filename}>
+                <h3 className="text-base font-bold text-[var(--ink)] truncate" title={file.original_filename}>
                   {file.original_filename}
                 </h3>
-                <span className="text-xs px-2 py-0.5 rounded-full bg-slate-200 text-slate-700 font-mono font-medium shrink-0">
+                <span
+                  className="text-xs px-2 py-0.5 rounded-full font-mono font-medium shrink-0"
+                  style={CHIP.neutral}
+                >
                   #{file.file_index + 1}
                 </span>
                 {file.status === 'printed' ? (
-                  <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-semibold shrink-0">
+                  <span
+                    className="text-xs px-2 py-0.5 rounded-full font-semibold shrink-0"
+                    style={CHIP.ok}
+                  >
                     ✓ Printed
                   </span>
                 ) : (
-                  <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-semibold shrink-0">
+                  <span
+                    className="text-xs px-2 py-0.5 rounded-full font-semibold shrink-0"
+                    style={CHIP.warn}
+                  >
                     Pending
                   </span>
                 )}
               </div>
-              <p className="text-xs text-slate-500 mt-0.5 truncate">
-                Order: <span className="font-mono font-semibold text-slate-700">{job.token}</span> • Customer:{' '}
-                <span className="font-medium text-slate-700">{job.customer_name}</span> • Size:{' '}
+              <p className="text-xs mt-0.5 truncate text-[var(--ink3)]">
+                Order: <span className="font-mono font-semibold text-[var(--ink)]">{job.token}</span> • Customer:{' '}
+                <span className="font-medium text-[var(--ink)]">{job.customer_name}</span> • Size:{' '}
                 {(file.file_size / 1024).toFixed(1)} KB • {file.page_count} page{file.page_count > 1 ? 's' : ''}
               </p>
             </div>
@@ -142,14 +180,22 @@ export const FileReviewModal: React.FC<FileReviewModalProps> = ({
               href={previewUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="px-3 py-1.5 text-xs font-semibold text-slate-600 bg-white border border-slate-300 rounded-lg hover:bg-slate-100 transition flex items-center gap-1.5"
+              className="px-3 py-1.5 text-xs font-semibold rounded-lg transition flex items-center gap-1.5"
+              style={{
+                ...FIELD,
+                color: 'var(--ink)',
+              }}
               title="Open raw file in new tab"
             >
               <span>↗</span> Open New Tab
             </a>
             <button
               onClick={onClose}
-              className="w-8 h-8 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-700 flex items-center justify-center font-bold text-sm transition"
+              className="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-sm transition cursor-pointer"
+              style={{
+                ...FIELD,
+                color: 'var(--ink2)',
+              }}
             >
               ✕
             </button>
@@ -159,14 +205,15 @@ export const FileReviewModal: React.FC<FileReviewModalProps> = ({
         {/* Status banner */}
         {statusMessage && (
           <div
-            className={`px-6 py-2.5 text-xs font-medium flex items-center justify-between ${
+            className="px-6 py-2.5 text-xs font-medium flex items-center justify-between border-b"
+            style={
               statusMessage.type === 'success'
-                ? 'bg-emerald-50 text-emerald-800 border-b border-emerald-200'
-                : 'bg-rose-50 text-rose-800 border-b border-rose-200'
-            }`}
+                ? { background: 'var(--ok-soft)', color: 'var(--ok)', borderColor: 'var(--ok-line)' }
+                : { background: 'var(--danger-soft)', color: 'var(--danger)', borderColor: 'var(--danger-line)' }
+            }
           >
             <span>{statusMessage.text}</span>
-            <button onClick={() => setStatusMessage(null)} className="text-xs font-bold opacity-70 hover:opacity-100">
+            <button onClick={() => setStatusMessage(null)} className="text-xs font-bold opacity-70 hover:opacity-100 cursor-pointer">
               ✕
             </button>
           </div>
@@ -175,32 +222,57 @@ export const FileReviewModal: React.FC<FileReviewModalProps> = ({
         {/* Content Body: Split view Preview (Left) + Options (Right) */}
         <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
           {/* Document Preview Pane */}
-          <div className="flex-1 bg-slate-900/5 p-4 flex items-center justify-center overflow-auto border-b md:border-b-0 md:border-r border-slate-200">
+          <div
+            className="flex-1 p-4 flex items-center justify-center overflow-auto border-b md:border-b-0 md:border-r"
+            style={{
+              background: 'var(--bg)',
+              borderColor: 'var(--border)',
+            }}
+          >
             {isPdf ? (
               <iframe
                 src={`${previewUrl}#toolbar=1&view=FitH`}
                 title={file.original_filename}
-                className="w-full h-full rounded-xl border border-slate-300 bg-white shadow-sm"
+                className="w-full h-full rounded-xl border shadow-sm"
+                style={{
+                  borderColor: 'var(--border2)',
+                  background: 'var(--panel)',
+                }}
               />
             ) : isImage ? (
               <div className="max-w-full max-h-full flex items-center justify-center p-2">
                 <img
                   src={previewUrl}
                   alt={file.original_filename}
-                  className="max-h-[70vh] max-w-full object-contain rounded-xl shadow-lg border border-slate-200 bg-white"
+                  className="max-h-[70vh] max-w-full object-contain rounded-xl shadow-lg border"
+                  style={{
+                    borderColor: 'var(--border2)',
+                    background: 'var(--panel)',
+                  }}
                 />
               </div>
             ) : (
-              <div className="text-center p-8 bg-white rounded-2xl border border-slate-200 shadow-sm max-w-sm">
+              <div
+                className="text-center p-8 rounded-2xl border shadow-sm max-w-sm"
+                style={{
+                  ...PANEL,
+                  padding: 24,
+                }}
+              >
                 <div className="text-4xl mb-3">📁</div>
-                <h4 className="text-sm font-bold text-slate-800 mb-1">Preview not supported inline</h4>
-                <p className="text-xs text-slate-500 mb-4">
+                <h4 className="text-sm font-bold text-[var(--ink)] mb-1">Preview not supported inline</h4>
+                <p className="text-xs text-[var(--ink3)] mb-4">
                   This file format cannot be rendered directly in the viewer.
                 </p>
                 <a
                   href={previewUrl}
                   download={file.original_filename}
-                  className="inline-block px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-sm transition"
+                  className="inline-block px-4 py-2 text-xs font-bold rounded-xl transition"
+                  style={{
+                    ...BTN_ACCENT,
+                    height: 36,
+                    lineHeight: '36px',
+                  }}
                 >
                   Download to Inspect
                 </a>
@@ -209,57 +281,64 @@ export const FileReviewModal: React.FC<FileReviewModalProps> = ({
           </div>
 
           {/* Document Print Options Pane */}
-          <div className="w-full md:w-84 bg-white p-5 flex flex-col justify-between overflow-y-auto shrink-0 border-l border-slate-100">
+          <div
+            className="w-full md:w-84 p-5 flex flex-col justify-between overflow-y-auto shrink-0 border-l"
+            style={{
+              background: 'var(--panel)',
+              borderColor: 'var(--border)',
+            }}
+          >
             <div className="space-y-4">
               <div>
-                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2.5">
+                <div style={EYEBROW} className="mb-3">
                   Print Configuration
-                </h4>
+                </div>
 
                 {/* Color Mode */}
                 <div className="space-y-1.5 mb-3.5">
-                  <label className="block text-xs font-semibold text-slate-700">Color Mode</label>
+                  <label className="block text-xs font-semibold text-[var(--ink2)]">Color Mode</label>
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
                       onClick={() => setColorMode('bw')}
-                      className={`px-3 py-2 rounded-xl text-xs font-bold border transition text-center cursor-pointer ${
+                      className="px-3 py-2 rounded-xl text-xs font-bold border transition text-center cursor-pointer"
+                      style={
                         colorMode === 'bw'
-                          ? 'bg-slate-900 text-white border-slate-900 shadow-xs'
-                          : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-                      }`}
+                          ? { background: 'var(--ink)', color: 'var(--panel)', borderColor: 'var(--ink)' }
+                          : { ...FIELD, color: 'var(--ink)' }
+                      }
                     >
-                      B/W (₹{pricing.bw_price_per_page}/p)
+                      B/W ({inr(pricing.bw_price_per_page)}/p)
                     </button>
                     <button
                       type="button"
                       disabled={!pricing.color_available}
                       onClick={() => setColorMode('color')}
-                      className={`px-3 py-2 rounded-xl text-xs font-bold border transition text-center cursor-pointer ${
-                        !pricing.color_available
-                          ? 'opacity-40 cursor-not-allowed bg-slate-50 text-slate-400 border-slate-200'
-                          : colorMode === 'color'
-                          ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
-                          : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-                      }`}
+                      className="px-3 py-2 rounded-xl text-xs font-bold border transition text-center cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                      style={
+                        colorMode === 'color'
+                          ? { background: 'var(--accent)', color: 'var(--primary-foreground)', borderColor: 'var(--accent)' }
+                          : { ...FIELD, color: 'var(--ink)' }
+                      }
                     >
-                      Color (₹{pricing.color_price_per_page}/p)
+                      Color ({inr(pricing.color_price_per_page)}/p)
                     </button>
                   </div>
                 </div>
 
                 {/* Sides */}
                 <div className="space-y-1.5 mb-3.5">
-                  <label className="block text-xs font-semibold text-slate-700">Print Sides</label>
+                  <label className="block text-xs font-semibold text-[var(--ink2)]">Print Sides</label>
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
                       onClick={() => setSides('single')}
-                      className={`px-3 py-2 rounded-xl text-xs font-bold border transition text-center cursor-pointer ${
+                      className="px-3 py-2 rounded-xl text-xs font-bold border transition text-center cursor-pointer"
+                      style={
                         sides === 'single'
-                          ? 'bg-slate-900 text-white border-slate-900 shadow-xs'
-                          : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-                      }`}
+                          ? { background: 'var(--ink)', color: 'var(--panel)', borderColor: 'var(--ink)' }
+                          : { ...FIELD, color: 'var(--ink)' }
+                      }
                     >
                       Single Side
                     </button>
@@ -267,13 +346,12 @@ export const FileReviewModal: React.FC<FileReviewModalProps> = ({
                       type="button"
                       disabled={!pricing.duplex_available}
                       onClick={() => setSides('duplex')}
-                      className={`px-3 py-2 rounded-xl text-xs font-bold border transition text-center cursor-pointer ${
-                        !pricing.duplex_available
-                          ? 'opacity-40 cursor-not-allowed bg-slate-50 text-slate-400 border-slate-200'
-                          : sides === 'duplex'
-                          ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
-                          : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-                      }`}
+                      className="px-3 py-2 rounded-xl text-xs font-bold border transition text-center cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                      style={
+                        sides === 'duplex'
+                          ? { background: 'var(--ink)', color: 'var(--panel)', borderColor: 'var(--ink)' }
+                          : { ...FIELD, color: 'var(--ink)' }
+                      }
                     >
                       Front & Back
                     </button>
@@ -282,18 +360,19 @@ export const FileReviewModal: React.FC<FileReviewModalProps> = ({
 
                 {/* Orientation */}
                 <div className="space-y-1.5 mb-3.5">
-                  <label className="block text-xs font-semibold text-slate-700">Orientation</label>
+                  <label className="block text-xs font-semibold text-[var(--ink2)]">Orientation</label>
                   <div className="grid grid-cols-3 gap-1.5">
                     {(['portrait', 'landscape', 'auto'] as OrientationMode[]).map((o) => (
                       <button
                         key={o}
                         type="button"
                         onClick={() => setOrientation(o)}
-                        className={`py-1.5 text-xs font-bold rounded-lg border capitalize transition cursor-pointer ${
+                        className="py-1.5 text-xs font-bold rounded-lg border capitalize transition cursor-pointer"
+                        style={
                           orientation === o
-                            ? 'bg-slate-800 text-white border-slate-800'
-                            : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-                        }`}
+                            ? { background: 'var(--ink)', color: 'var(--panel)', borderColor: 'var(--ink)' }
+                            : { ...FIELD, color: 'var(--ink2)' }
+                        }
                       >
                         {o}
                       </button>
@@ -304,12 +383,13 @@ export const FileReviewModal: React.FC<FileReviewModalProps> = ({
                 {/* Copies & Page Range */}
                 <div className="grid grid-cols-2 gap-2 mb-3.5">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">Copies</label>
-                    <div className="flex items-center border border-slate-300 rounded-xl overflow-hidden">
+                    <label className="block text-xs font-semibold text-[var(--ink2)] mb-1">Copies</label>
+                    <div className="flex items-center rounded-xl overflow-hidden" style={FIELD}>
                       <button
                         type="button"
                         onClick={() => setCopies(Math.max(1, copies - 1))}
-                        className="px-2.5 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold text-sm transition"
+                        className="px-2.5 py-1.5 font-bold text-sm transition cursor-pointer hover:opacity-80"
+                        style={{ color: 'var(--ink)' }}
                       >
                         -
                       </button>
@@ -319,12 +399,14 @@ export const FileReviewModal: React.FC<FileReviewModalProps> = ({
                         max="999"
                         value={copies}
                         onChange={(e) => setCopies(Math.max(1, parseInt(e.target.value, 10) || 1))}
-                        className="w-full text-center text-xs font-bold py-1.5 focus:outline-none"
+                        className="w-full text-center text-xs font-bold py-1.5 focus:outline-none bg-transparent"
+                        style={{ ...NUM, color: 'var(--ink)' }}
                       />
                       <button
                         type="button"
                         onClick={() => setCopies(copies + 1)}
-                        className="px-2.5 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold text-sm transition"
+                        className="px-2.5 py-1.5 font-bold text-sm transition cursor-pointer hover:opacity-80"
+                        style={{ color: 'var(--ink)' }}
                       >
                         +
                       </button>
@@ -332,27 +414,29 @@ export const FileReviewModal: React.FC<FileReviewModalProps> = ({
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">Page Range</label>
+                    <label className="block text-xs font-semibold text-[var(--ink2)] mb-1">Page Range</label>
                     <input
                       type="text"
                       placeholder="all (e.g. 1-3)"
                       value={pageRange}
                       onChange={(e) => setPageRange(e.target.value)}
-                      className="w-full px-2.5 py-1.5 text-xs font-mono font-medium rounded-xl border border-slate-300 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                      className="w-full px-2.5 py-1.5 text-xs font-medium rounded-xl focus:border-[var(--accent)]"
+                      style={{ ...FIELD, ...NUM }}
                     />
                   </div>
                 </div>
 
                 {/* Target Printer Destination */}
                 <div className="space-y-1.5 mb-3.5">
-                  <label className="block text-xs font-semibold text-slate-700">Target Printer</label>
+                  <label className="block text-xs font-semibold text-[var(--ink2)]">Target Printer</label>
                   <select
                     value={selectedPrinter}
                     onChange={(e) => setSelectedPrinter(e.target.value)}
-                    className="w-full px-3 py-2 text-xs font-medium rounded-xl border border-slate-300 bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    className="w-full px-3 py-2 text-xs font-medium rounded-xl focus:border-[var(--accent)] cursor-pointer"
+                    style={{ ...FIELD, color: 'var(--ink)' }}
                   >
                     {printers.map((p) => (
-                      <option key={p.name} value={p.name}>
+                      <option key={p.name} value={p.name} style={{ background: 'var(--panel)', color: 'var(--ink)' }}>
                         {p.name} {p.isDefault ? '(Default)' : ''}
                       </option>
                     ))}
@@ -361,25 +445,37 @@ export const FileReviewModal: React.FC<FileReviewModalProps> = ({
               </div>
 
               {/* Cost Summary Box */}
-              <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200">
-                <div className="flex items-center justify-between text-xs text-slate-500 mb-1">
+              <div
+                className="p-3.5 rounded-xl border"
+                style={{
+                  background: 'var(--sub)',
+                  borderColor: 'var(--border2)',
+                }}
+              >
+                <div className="flex items-center justify-between text-xs text-[var(--ink3)] mb-1">
                   <span>Document Cost</span>
-                  <span className="font-mono text-slate-700">{costEst.breakdownText}</span>
+                  <span className="font-mono text-[var(--ink2)]" style={NUM}>{costEst.breakdownText}</span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-700">Calculated Price</span>
-                  <span className="text-lg font-black font-mono text-emerald-700">₹{costEst.totalCost}</span>
+                  <span className="text-xs font-bold text-[var(--ink)]">Calculated Price</span>
+                  <span className="text-lg font-black" style={{ ...NUM, color: 'var(--ok)' }}>
+                    {inr(costEst.totalCost)}
+                  </span>
                 </div>
               </div>
             </div>
 
             {/* Action Buttons */}
-            <div className="pt-4 border-t border-slate-100 space-y-2">
+            <div className="pt-4 border-t space-y-2" style={{ borderColor: 'var(--rule2)' }}>
               <button
                 type="button"
                 disabled={isPrinting}
                 onClick={handlePrintFile}
-                className="w-full py-2.5 px-4 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 active:scale-98 shadow-md shadow-emerald-600/20 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                className="w-full flex items-center justify-center gap-2 transition-all hover:opacity-90 active:scale-[0.99] disabled:opacity-50"
+                style={{
+                  ...BTN_ACCENT,
+                  height: 44,
+                }}
               >
                 {isPrinting ? (
                   <span>Printing document...</span>
@@ -396,14 +492,24 @@ export const FileReviewModal: React.FC<FileReviewModalProps> = ({
                   type="button"
                   disabled={isSaving}
                   onClick={handleSaveOptions}
-                  className="py-2 px-3 rounded-xl text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 transition cursor-pointer disabled:opacity-50"
+                  className="transition-all hover:opacity-90 active:scale-[0.99] disabled:opacity-50"
+                  style={{
+                    ...BTN_SECONDARY,
+                    height: 38,
+                    fontSize: 12,
+                  }}
                 >
                   {isSaving ? 'Saving...' : 'Save Options'}
                 </button>
                 <button
                   type="button"
                   onClick={onClose}
-                  className="py-2 px-3 rounded-xl text-xs font-bold text-slate-500 hover:text-slate-800 bg-white border border-slate-200 transition cursor-pointer"
+                  className="transition-all hover:opacity-90 active:scale-[0.99]"
+                  style={{
+                    ...BTN_SECONDARY,
+                    height: 38,
+                    fontSize: 12,
+                  }}
                 >
                   Close
                 </button>

@@ -10,6 +10,8 @@ import {
   JobFile,
   AuthUser,
   LoginResponse,
+  WhatsAppStatus,
+  WhatsAppSettings,
 } from './types.js';
 
 const API_BASE = '/api';
@@ -422,6 +424,47 @@ export async function updateJobFileOptions(
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || 'Failed to update file options');
   }
+  return res.json();
+}
+
+// WhatsApp Bot API
+export async function fetchWhatsAppStatus(): Promise<WhatsAppStatus> {
+  const res = await fetch(`${API_BASE}/whatsapp/status`);
+  if (!res.ok) throw new Error('Failed to load WhatsApp status');
+  return res.json();
+}
+
+export async function connectWhatsApp(): Promise<WhatsAppStatus> {
+  const res = await fetch(`${API_BASE}/whatsapp/connect`, { method: 'POST' });
+  if (!res.ok) throw new Error('Failed to initiate WhatsApp connection');
+  return res.json();
+}
+
+export async function disconnectWhatsApp(): Promise<WhatsAppStatus> {
+  const res = await fetch(`${API_BASE}/whatsapp/disconnect`, { method: 'POST' });
+  if (!res.ok) throw new Error('Failed to disconnect WhatsApp');
+  return res.json();
+}
+
+export async function fetchWhatsAppSettings(): Promise<WhatsAppSettings> {
+  const res = await fetch(`${API_BASE}/whatsapp/settings`);
+  if (!res.ok) throw new Error('Failed to load WhatsApp settings');
+  return res.json();
+}
+
+export async function updateWhatsAppSettings(settings: Partial<WhatsAppSettings>): Promise<WhatsAppSettings> {
+  const res = await fetch(`${API_BASE}/whatsapp/settings`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(settings),
+  });
+  if (!res.ok) throw new Error('Failed to update WhatsApp settings');
+  return res.json();
+}
+
+export async function fetchJobByToken(token: string): Promise<PrintJob> {
+  const res = await fetch(`${API_BASE}/jobs/token/${encodeURIComponent(token)}`);
+  if (!res.ok) throw new Error('Failed to load print job for token');
   return res.json();
 }
 

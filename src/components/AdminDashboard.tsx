@@ -20,6 +20,7 @@ import {
   FileText,
   LogOut,
   UserCheck,
+  MessageSquare,
 } from 'lucide-react';
 import {
   PrintJob,
@@ -31,6 +32,7 @@ import {
   TunnelStatus,
   DiscoveredPrinter,
   AuthUser,
+  WhatsAppStatus,
 } from '../types.js';
 import {
   fetchJobs,
@@ -41,6 +43,7 @@ import {
   fetchTunnelStatus,
   fetchPrinterProfiles,
   fetchDiscoveredPrinters,
+  fetchWhatsAppStatus,
   updatePrinterProfile,
   updateSettings,
   deleteJob,
@@ -55,10 +58,23 @@ import { CounterQrModal } from './CounterQrModal.js';
 import { TunnelModal } from './TunnelModal.js';
 import { SettingsModal } from './SettingsModal.js';
 import { DiscoveredPrintersModal } from './DiscoveredPrintersModal.js';
+import { WhatsAppModal } from './WhatsAppModal.js';
 import { chime } from './audioChime.js';
 import { DEFAULT_PRICING, findOptimalPrinter } from '../utils/costCalculator.js';
 import { formatCurrency, formatFileSize, formatRelativeTime } from '../utils/formatters.js';
 import { useTheme } from '../theme.js';
+import {
+  MONO,
+  NUM,
+  EYEBROW,
+  PANEL,
+  FIELD,
+  BTN_PRIMARY,
+  BTN_ACCENT,
+  BTN_SECONDARY,
+  CHIP,
+  inr,
+} from '../lib/design-system.js';
 
 interface AdminDashboardProps {
   currentUser?: AuthUser | null;
@@ -100,6 +116,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [showTunnelModal, setShowTunnelModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showDiscoveredModal, setShowDiscoveredModal] = useState(false);
+  const [showWhatsAppModal, setShowWhatsAppModal] = useState(false);
+  const [whatsAppStatus, setWhatsAppStatus] = useState<WhatsAppStatus | null>(null);
   const [discoveredPrinters, setDiscoveredPrinters] = useState<DiscoveredPrinter[]>([]);
 
   // Load initial data
@@ -115,6 +133,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         effectivePricing,
         loadedShop,
         loadedTunnel,
+        loadedWhatsApp,
       ] = await Promise.all([
         fetchJobs().catch(() => []),
         fetchPrinters().catch(() => []),
@@ -124,11 +143,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         fetchEffectivePricing().catch(() => null),
         fetchShopDetails().catch(() => null),
         fetchTunnelStatus().catch(() => null),
+        fetchWhatsAppStatus().catch(() => null),
       ]);
 
       setJobs(loadedJobs);
       setPrinters(loadedPrinters);
       setPrinterProfiles(loadedProfiles);
+      if (loadedWhatsApp) setWhatsAppStatus(loadedWhatsApp);
       setDiscoveredPrinters(loadedDiscovered);
 
       if (effectivePricing) {
@@ -214,6 +235,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           setTunnel(message.tunnel);
         } else if (message.type === 'PRINTERS_DISCOVERED') {
           setDiscoveredPrinters(message.discoveredPrinters);
+        } else if (message.type === 'WHATSAPP_STATUS_UPDATED') {
+          setWhatsAppStatus(message.whatsappStatus || null);
         }
       },
       (status) => {
@@ -531,6 +554,37 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               <span className={`w-1.5 h-1.5 rounded-full ${tunnel?.tunnelUrl ? 'bg-[var(--accent)]' : 'bg-[var(--ink4)]'}`} />
             </button>
 
+            {/* WhatsApp Bot Status & QR Link */}
+            <button
+              onClick={() => setShowWhatsAppModal(true)}
+              title={
+                whatsAppStatus?.state === 'connected'
+                  ? `WhatsApp Bot: +${whatsAppStatus.phoneNumber} (${whatsAppStatus.pushName || 'Connected'})`
+                  : whatsAppStatus?.state === 'qr_ready'
+                  ? 'WhatsApp QR Ready - Click to Scan'
+                  : 'Connect WhatsApp Bot'
+              }
+              className={`py-1.5 px-3 rounded-xl border text-xs font-bold font-mono flex items-center gap-1.5 transition shadow-2xs cursor-pointer ${
+                whatsAppStatus?.state === 'connected'
+                  ? 'bg-[var(--ok-soft)] border-[var(--ok-line)] text-[var(--ok)] hover:opacity-90'
+                  : whatsAppStatus?.state === 'qr_ready'
+                  ? 'bg-[var(--warn-soft)] border-[var(--warn-line)] text-[var(--warn)] animate-pulse hover:opacity-90'
+                  : 'bg-[var(--sub)] border-[var(--border)] text-[var(--ink2)] hover:bg-[var(--panel)]'
+              }`}
+            >
+              <MessageSquare className="w-4 h-4 text-[var(--ok)]" />
+              <span className="hidden sm:inline">WhatsApp</span>
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${
+                  whatsAppStatus?.state === 'connected'
+                    ? 'bg-[var(--ok)] animate-pulse'
+                    : whatsAppStatus?.state === 'qr_ready'
+                    ? 'bg-[var(--warn)]'
+                    : 'bg-[var(--ink4)]'
+                }`}
+              />
+            </button>
+
             {/* Auto-Detected Hardware Printers */}
             <button
               onClick={() => setShowDiscoveredModal(true)}
@@ -757,8 +811,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           {job.status === 'printed' ? '✓ Printed' : 'Pending'}
                         </span>
 
-                        <span className="font-bold text-[var(--ink)]">
-                          {formatCurrency(job.estimated_cost)}
+                        <span className="font-bold text-[var(--ink)]" style={NUM}>
+                          {inr(job.estimated_cost)}
                         </span>
                       </div>
                     </div>
@@ -816,7 +870,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     </div>
                     <p className="text-xs text-[var(--ink3)] font-mono mt-0.5">
                       Submitted {formatRelativeTime(selectedJob.created_at)} • Total:{' '}
-                      <span className="font-bold text-[var(--ink)]">{formatCurrency(selectedJob.estimated_cost)}</span>
+                      <span className="font-bold text-[var(--ink)]" style={NUM}>{inr(selectedJob.estimated_cost)}</span>
                       {selectedJob.printer_name && (
                         <span> • Printed on: {selectedJob.printer_name}</span>
                       )}
@@ -830,7 +884,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   <button
                     onClick={() => handlePrintAll()}
                     disabled={isPrintingAll}
-                    className="py-2.5 px-4 rounded-xl text-xs font-bold font-mono text-white bg-[var(--ok)] hover:opacity-90 active:scale-98 shadow-md shadow-[var(--ok)]/20 transition flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                    className="h-[38px] px-4 rounded-[8px] text-xs font-bold font-mono transition flex items-center gap-2 cursor-pointer disabled:opacity-50 border-0 hover:opacity-90 active:scale-[0.99]"
+                    style={{
+                      background: 'var(--accent)',
+                      color: 'var(--primary-foreground)',
+                    }}
                   >
                     <Printer className="w-4 h-4" />
                     <span>
@@ -843,7 +901,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   {/* Mark as Printed / Pending toggle */}
                   <button
                     onClick={() => handleToggleJobStatus(selectedJob)}
-                    className="py-2 px-3 rounded-xl border border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--sub)] text-[var(--ink)] text-xs font-bold font-mono flex items-center gap-1.5 transition cursor-pointer"
+                    className="h-[38px] px-3 rounded-[8px] border border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--sub)] text-[var(--ink)] text-xs font-bold font-mono flex items-center gap-1.5 transition cursor-pointer"
                   >
                     <CheckCircle2 className="w-4 h-4 text-[var(--ok)]" />
                     <span>{selectedJob.status === 'printed' ? 'Mark Pending' : 'Mark Printed'}</span>
@@ -853,7 +911,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   <button
                     onClick={() => handleDeleteJob(selectedJob)}
                     title="Delete entire order"
-                    className="p-2 rounded-xl border border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--danger-soft)] text-[var(--ink3)] hover:text-[var(--danger)] hover:border-[var(--danger-line)] transition cursor-pointer"
+                    className="w-[38px] h-[38px] flex items-center justify-center rounded-[8px] border border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--danger-soft)] text-[var(--ink3)] hover:text-[var(--danger)] hover:border-[var(--danger-line)] transition cursor-pointer"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
@@ -864,10 +922,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <h3 className="text-xs font-bold font-mono uppercase tracking-wider text-[var(--ink3)]">
+                    <div style={EYEBROW} className="mb-1">
                       Order Documents ({selectedJob.files?.length || 1} files • {selectedJob.total_pages || selectedJob.page_count} pages)
-                    </h3>
-                    <p className="text-xs text-[var(--ink4)] mt-0.5">
+                    </div>
+                    <p className="text-xs text-[var(--ink3)]">
                       Click any file card below to open high-resolution document preview and adjust print options.
                     </p>
                   </div>
@@ -944,11 +1002,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           {/* Print Option Pills */}
                           <div className="flex flex-wrap gap-1.5 mb-3 text-[10px] font-mono">
                             <span
-                              className={`px-2 py-0.5 rounded border font-bold uppercase ${
+                              className="px-2 py-0.5 rounded border font-bold uppercase"
+                              style={
                                 file.color_mode === 'color'
-                                  ? 'bg-rose-50 text-rose-700 border-rose-200'
-                                  : 'bg-slate-100 text-slate-700 border-slate-200'
-                              }`}
+                                  ? CHIP.accent
+                                  : CHIP.neutral
+                              }
                             >
                               {file.color_mode === 'color' ? 'Color' : 'B/W'}
                             </span>
@@ -975,8 +1034,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         <div className="pt-3 border-t border-[var(--rule)] flex items-center justify-between">
                           <div>
                             <span className="text-[10px] font-mono text-[var(--ink4)] block">Cost</span>
-                            <span className="text-xs font-black font-mono text-[var(--ink)]">
-                              {formatCurrency(file.estimated_cost)}
+                            <span className="text-xs font-black text-[var(--ink)]" style={NUM}>
+                              {inr(file.estimated_cost)}
                             </span>
                           </div>
 
@@ -1073,6 +1132,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           onProfilesUpdated={() => {
             fetchPrinterProfiles().then(setPrinterProfiles).catch(() => {});
           }}
+        />
+      )}
+
+      {/* WhatsApp Print Bot Modal */}
+      {showWhatsAppModal && (
+        <WhatsAppModal
+          status={whatsAppStatus}
+          onClose={() => setShowWhatsAppModal(false)}
+          onStatusUpdated={(updated) => setWhatsAppStatus(updated)}
         />
       )}
     </div>

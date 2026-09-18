@@ -5,6 +5,7 @@ import multer from 'multer';
 import {
   getAllJobs,
   getJobById,
+  getJobByToken,
   insertJob,
   insertJobWithFiles,
   getJobFiles,
@@ -20,6 +21,7 @@ import { uploadMiddleware, deletePhysicalFile, cleanupExpiredFiles } from '../st
 import { detectPageCount } from '../pdfService.js';
 import { calculatePrintCost } from '../../shared/costCalculator.js';
 import { PrintJob, JobFile, ColorMode, SidesMode, OrientationMode } from '../../shared/types.js';
+import { notifyWhatsAppJobPrinting, notifyWhatsAppJobCompleted } from '../whatsappService.js';
 
 export function createJobsRouter(broadcast: (message: any) => void) {
   const router = Router();
@@ -57,6 +59,20 @@ export function createJobsRouter(broadcast: (message: any) => void) {
       const job = getJobById(id);
       if (!job) {
         return res.status(404).json({ error: 'Job not found' });
+      }
+      res.json(job);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // GET /api/jobs/token/:token - Lookup job by token (e.g. #P-101 or P-101)
+  router.get('/token/:token', (req: Request, res: Response) => {
+    try {
+      const token = String(req.params.token);
+      const job = getJobByToken(token);
+      if (!job) {
+        return res.status(404).json({ error: 'Job not found for token' });
       }
       res.json(job);
     } catch (err: any) {
@@ -395,6 +411,14 @@ export function createJobsRouter(broadcast: (message: any) => void) {
         type: 'JOB_UPDATED',
         job: updated,
       });
+
+      if (updated && updated.source === 'whatsapp' && updated.whatsapp_jid) {
+        if (updates.status === 'printing') {
+          notifyWhatsAppJobPrinting(updated).catch(console.warn);
+        } else if (updates.status === 'printed') {
+          notifyWhatsAppJobCompleted(updated).catch(console.warn);
+        }
+      }
 
       res.json(updated);
     } catch (err: any) {

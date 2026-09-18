@@ -51,6 +51,7 @@
 
   --dc-sans: 'Public Sans', system-ui, -apple-system, sans-serif;
   --dc-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --primary-foreground: #101110;
 }
 
 :root[data-theme='light'] {
@@ -95,6 +96,7 @@
   --glow-a: rgba(96, 130, 206, 0.10);
   --glow-b: rgba(196, 148, 74, 0.07);
   --paper-shadow: rgba(26, 25, 23, 0.16);
+  --primary-foreground: #ffffff;
 }
 
 /* Base Body on Ruled Ground */

@@ -24,6 +24,7 @@ import {
 } from '../db.js';
 import { calculatePrintCost } from '../../shared/costCalculator.js';
 import { ColorMode, SidesMode, OrientationMode } from '../../shared/types.js';
+import { notifyWhatsAppJobCompleted } from '../whatsappService.js';
 
 export function createPrintersRouter(broadcast: (message: any) => void) {
   const router = Router();
@@ -371,6 +372,10 @@ export function createPrintersRouter(broadcast: (message: any) => void) {
         type: 'JOB_UPDATED',
         job: updated,
       });
+
+      if (updated && updated.source === 'whatsapp' && updated.whatsapp_jid) {
+        notifyWhatsAppJobCompleted(updated).catch(console.warn);
+      }
 
       res.json({
         success: true,

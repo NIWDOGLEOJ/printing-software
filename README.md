@@ -34,14 +34,24 @@ On the shop laptop/PC, the Admin Queue Dashboard receives instant real-time noti
      - "Print Now", "Mark as Printed", "Reprint", and "Delete" actions.
    - **Smart Routing**: Automatically routes jobs to the lowest-cost capable printer (e.g. routing B/W jobs to B/W production printers and Color jobs to inkjet/laser color printers).
 
-3. **Multi-Protocol Automatic Printer Detection**
+3. **Direct WhatsApp Print Bot (Zero-Friction Customer Printing)**
+   - **Send Document Directly**: Customers simply text or attach their PDF/Photo to the shop's WhatsApp number.
+   - **Automatic Queue Token**: Bot instantly acknowledges, inspects page count, calculates price, and replies with a queue token (e.g. `#P-101`) and cost breakdown.
+   - **Multi-File Batching**: Successive documents sent within 25 seconds are automatically grouped into a single print order.
+   - **Quick Keyword Adjustments**: Customers can reply `COLOR`, `BW`, `DUPLEX`, `2 COPIES`, or `CANCEL` to modify their order directly in WhatsApp chat.
+   - **1-Tap Mobile Customization Link**: Includes a direct link in the chat to visually inspect and customize print settings on their phone.
+   - **Live WhatsApp Status Updates**: Sends automated alerts when printing begins and when ready for pickup at the counter.
+   - **Lightweight Embedded Engine**: Built using `@whiskeysockets/baileys` directly in Node.js (zero heavy headless Chrome / minimal memory footprint).
+   - **In-App Admin QR Pairing**: Link any phone by scanning the QR code in the Admin Dashboard with WhatsApp "Linked Devices".
+
+4. **Multi-Protocol Automatic Printer Detection**
    - **Local Network (Wi-Fi / Ethernet)**: Scans mDNS / DNS-SD broadcast services (`_ipp._tcp`, `_ipps._tcp`, `_printer._tcp`, `_pdl-datastream._tcp`) via Bonjour (macOS) and Avahi (Linux).
    - **Hardware Capabilities Extraction**: Live extraction of Color (`Color=T`) and Duplex (`Duplex=T`), IPv4 address, and web management URL.
    - **Direct Hardware (USB)**: Enumerates USB-connected printers via CUPS backend probes (`lpinfo -v`).
    - **CUPS System Queues**: Cross-references configured destinations (`lpstat -p`, `lpstat -v`).
    - **Live Reachability Probing**: Real-time TCP socket health checks (`🟢 Online` vs `🔴 Offline`).
 
-4. **Connectivity & Scannable Counter QR Standee**
+5. **Connectivity & Scannable Counter QR Standee**
    - **Local Wi-Fi URLs**: Displays LAN IPs (e.g. `http://192.168.x.x:4000/`) so customers on shop Wi-Fi can scan and upload immediately.
    - **Cloudflare Quick Tunnel**: Built-in script and admin button to launch `cloudflared tunnel --url http://localhost:4000` without requiring an account or router port forwarding, allowing customers on cellular data (4G/5G) to upload from anywhere.
    - **Printable Counter Standee**: Generates a high-contrast counter placard ready to print and display on the counter.

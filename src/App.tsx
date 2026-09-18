@@ -62,9 +62,9 @@ export const App: React.FC = () => {
     <div className="min-h-screen">
       {view === 'admin' ? (
         isCheckingAuth ? (
-          <div className="min-h-screen flex items-center justify-center bg-slate-100 font-mono text-xs text-slate-500">
+          <div className="min-h-screen flex items-center justify-center bg-[var(--bg)] font-mono text-xs text-[var(--ink3)]">
             <div className="flex items-center gap-2">
-              <svg className="animate-spin h-4 w-4 text-emerald-600" fill="none" viewBox="0 0 24 24">
+              <svg className="animate-spin h-4 w-4 text-[var(--accent)]" fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
               </svg>
@@ -89,7 +89,7 @@ export const App: React.FC = () => {
           <div className="absolute top-2 right-2 sm:top-4 sm:right-4 z-20">
             <button
               onClick={() => navigateTo('admin')}
-              className="text-[11px] font-bold text-slate-400 hover:text-slate-800 bg-white/80 hover:bg-white px-2.5 py-1 rounded-lg border border-slate-200 shadow-xs transition cursor-pointer"
+              className="text-[11px] font-bold text-[var(--ink3)] hover:text-[var(--ink)] bg-[var(--panel)]/90 hover:bg-[var(--panel)] px-2.5 py-1 rounded-lg border border-[var(--border)] shadow-xs transition cursor-pointer font-mono"
             >
               Shop PC Login
             </button>

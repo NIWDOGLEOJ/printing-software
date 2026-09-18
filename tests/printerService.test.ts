@@ -63,4 +63,28 @@ describe('Printer Service', () => {
     // Clean up test file
     fs.unlinkSync(testFilePath);
   });
+
+  it('normalizes multi-page PDF files preserving all pages cleanly', async () => {
+    // Generate a 3-page test PDF
+    const { PDFDocument } = await import('pdf-lib');
+    const doc = await PDFDocument.create();
+    doc.addPage([595.28, 841.89]);
+    doc.addPage([595.28, 841.89]);
+    doc.addPage([595.28, 841.89]);
+    const pdfBytes = await doc.save();
+
+    const tmpPdf = path.resolve('/tmp/test_multipage.pdf');
+    fs.writeFileSync(tmpPdf, pdfBytes);
+
+    const prep = await preparePrintableFile(tmpPdf);
+    expect(prep.printablePath.endsWith('.pdf')).toBe(true);
+    expect(fs.existsSync(prep.printablePath)).toBe(true);
+
+    const checkDoc = await PDFDocument.load(fs.readFileSync(prep.printablePath));
+    expect(checkDoc.getPageCount()).toBe(3);
+
+    // Cleanup
+    if (prep.isTemp && fs.existsSync(prep.printablePath)) fs.unlinkSync(prep.printablePath);
+    if (fs.existsSync(tmpPdf)) fs.unlinkSync(tmpPdf);
+  });
 });

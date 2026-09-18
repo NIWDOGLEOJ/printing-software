@@ -1,6 +1,16 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { login, fetchShopDetails } from '../api.js';
 import { AuthUser, ShopDetails } from '../types.js';
+import {
+  MONO,
+  NUM,
+  EYEBROW,
+  PANEL,
+  FIELD,
+  BTN_PRIMARY,
+  KBD_ON_FILL,
+} from '../lib/design-system.js';
+import { useTheme } from '../theme.js';
 
 interface LoginPageProps {
   onLoginSuccess: (user: AuthUser) => void;
@@ -11,11 +21,15 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   onLoginSuccess,
   onBackToCustomerView,
 }) => {
+  const [theme, toggleTheme] = useTheme();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [shop, setShop] = useState<ShopDetails | null>(null);
+
+  const passwordRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     fetchShopDetails()
@@ -25,8 +39,13 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!username.trim() || !password) {
-      setErrorMessage('Please enter both username and password.');
+    if (!username.trim()) {
+      setErrorMessage('Enter a username to continue.');
+      return;
+    }
+    if (!password) {
+      setErrorMessage('Enter your password.');
+      passwordRef.current?.focus();
       return;
     }
 
@@ -38,135 +57,235 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       if (res.success && res.user) {
         onLoginSuccess(res.user);
       } else {
-        setErrorMessage('Invalid credentials. Please try again.');
+        setErrorMessage('Invalid credentials. Please verify your username and password.');
+        setPassword('');
+        passwordRef.current?.focus();
       }
     } catch (err: any) {
-      setErrorMessage(err.message || 'Login failed. Please verify credentials.');
+      setErrorMessage(err.message || 'Login failed. Please check network connection.');
+      setPassword('');
+      passwordRef.current?.focus();
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-slate-100 flex flex-col justify-center py-12 sm:px-6 lg:px-8 font-sans">
-      <div className="sm:mx-auto sm:w-full sm:max-w-md">
-        {/* Shop Logo & Title */}
-        <div className="text-center">
-          {shop?.logoUrl ? (
-            <img
-              src={shop.logoUrl}
-              alt={shop.shopName || 'Shop Logo'}
-              className="mx-auto h-16 w-auto object-contain mb-3 drop-shadow-sm"
-              onError={(e) => {
-                (e.target as HTMLElement).style.display = 'none';
-              }}
-            />
-          ) : (
-            <div className="mx-auto w-14 h-14 rounded-2xl bg-emerald-600 text-white flex items-center justify-center font-bold text-2xl shadow-md shadow-emerald-600/20 mb-3">
-              🖨️
-            </div>
-          )}
-
-          <h2 className="text-2xl font-black text-slate-900 tracking-tight">
+    <div className="min-h-screen bg-[var(--bg)] text-[var(--ink)] flex flex-col justify-between font-sans dc-ground">
+      {/* Top Header Bar — Exactly matching Billing Terminal */}
+      <header className="flex items-center justify-between px-6 h-[58px] border-b border-[var(--border)] bg-[var(--panel)] shrink-0">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-lg bg-[var(--sub)] border border-[var(--border2)] flex items-center justify-center text-base overflow-hidden shrink-0">
+            {shop?.logoUrl ? (
+              <img
+                src={shop.logoUrl}
+                alt={shop.shopName || 'Shop Logo'}
+                className="w-full h-full object-contain p-1"
+                onError={(e) => {
+                  (e.target as HTMLElement).style.display = 'none';
+                }}
+              />
+            ) : (
+              '🖨️'
+            )}
+          </div>
+          <span className="text-[16px] font-black tracking-[-0.02em] text-[var(--ink)]">
             {shop?.shopName || 'J MART'}
-          </h2>
-          <p className="text-xs text-slate-500 font-medium mt-0.5">
-            Quick Print Station • Operator Portal
-          </p>
+          </span>
+          <span style={EYEBROW} className="hidden sm:inline">
+            Print Terminal Sign-In
+          </span>
         </div>
 
-        {/* Login Card */}
-        <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md px-4 sm:px-0">
-          <div className="bg-white py-8 px-6 sm:px-10 shadow-xl shadow-slate-200/50 rounded-2xl border border-slate-200">
-            <div className="mb-6">
-              <h3 className="text-lg font-bold text-slate-900">Sign in with Billing Account</h3>
-              <p className="text-xs text-slate-500 mt-1">
-                Use your active POS billing operator credentials (Owner, Co-owner, or Employee).
-              </p>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5">
+            <div className="w-2 h-2 rounded-full bg-[var(--ok)] animate-pulse" />
+            <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--ink3)' }}>
+              Online
+            </span>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => toggleTheme()}
+            className="h-[30px] px-2.5 rounded-[7px] font-mono text-[11px] font-bold tracking-[0.06em] uppercase cursor-pointer transition-colors"
+            style={{ ...FIELD, color: 'var(--ink2)' }}
+            title={`Switch to ${theme === 'dark' ? 'Light' : 'Dark'} mode`}
+          >
+            {theme === 'light' ? 'Dark' : 'Light'}
+          </button>
+        </div>
+      </header>
+
+      {/* Centered Single Login Box */}
+      <main className="flex-1 flex items-center justify-center p-4 sm:p-6">
+        <div
+          className="w-full max-w-[420px]"
+          style={{
+            ...PANEL,
+            borderRadius: 12,
+            padding: '32px 28px',
+            boxShadow: '0 8px 30px var(--paper-shadow)',
+          }}
+        >
+          <div className="mb-6">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-12 h-12 rounded-xl bg-[var(--sub)] border border-[var(--border2)] flex items-center justify-center text-2xl overflow-hidden shrink-0">
+                {shop?.logoUrl ? (
+                  <img
+                    src={shop.logoUrl}
+                    alt={shop.shopName || 'Logo'}
+                    className="w-full h-full object-contain p-1"
+                    onError={(e) => {
+                      (e.target as HTMLElement).style.display = 'none';
+                    }}
+                  />
+                ) : (
+                  '🖨️'
+                )}
+              </div>
+              <div>
+                <div style={EYEBROW}>Counter Terminal</div>
+                <div className="text-[18px] font-black tracking-tight text-[var(--ink)]">
+                  {shop?.shopName || 'J MART'}
+                </div>
+              </div>
             </div>
 
+            <h1 className="text-[22px] font-extrabold tracking-[-0.03em] mb-1 text-[var(--ink)]">
+              Sign in with Billing Account
+            </h1>
+            <p className="text-[13px] leading-relaxed text-[var(--ink2)]">
+              Enter your POS operator credentials (Owner, Co-owner, or Employee).
+            </p>
+          </div>
+
+          <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+            {/* Username Input */}
+            <div>
+              <label
+                htmlFor="username"
+                className="block text-[12px] font-semibold text-[var(--ink2)] mb-1.5"
+              >
+                Username
+              </label>
+              <input
+                id="username"
+                type="text"
+                autoComplete="username"
+                autoFocus
+                autoCapitalize="none"
+                value={username}
+                onChange={(e) => {
+                  setUsername(e.target.value);
+                  setErrorMessage('');
+                }}
+                placeholder="Cashier or Operator username"
+                disabled={isLoading}
+                className="w-full text-[15px] px-3.5 transition-colors focus:border-[var(--accent)]"
+                style={{ ...FIELD, height: 46 }}
+              />
+            </div>
+
+            {/* Password Input */}
+            <div>
+              <label
+                htmlFor="password"
+                className="block text-[12px] font-semibold text-[var(--ink2)] mb-1.5"
+              >
+                Password
+              </label>
+              <div className="relative">
+                <input
+                  ref={passwordRef}
+                  id="password"
+                  type={showPassword ? 'text' : 'password'}
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    setErrorMessage('');
+                  }}
+                  placeholder="••••••••"
+                  disabled={isLoading}
+                  className="w-full text-[15px] pl-3.5 pr-16 transition-colors focus:border-[var(--accent)]"
+                  style={{ ...FIELD, ...NUM, height: 46 }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-1.5 top-1.5 h-[34px] px-2.5 rounded-[5px] text-[11px] font-semibold cursor-pointer transition-colors"
+                  style={{ ...FIELD, color: 'var(--ink2)' }}
+                >
+                  {showPassword ? 'Hide' : 'Show'}
+                </button>
+              </div>
+            </div>
+
+            {/* Error Banner */}
             {errorMessage && (
-              <div className="mb-5 p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 font-medium flex items-center gap-2">
-                <span className="text-base leading-none">⚠️</span>
-                <span>{errorMessage}</span>
+              <div
+                className="p-3 rounded-[8px] text-[12px] font-semibold animate-in fade-in duration-150"
+                style={{
+                  background: 'var(--danger-soft)',
+                  border: '1px solid var(--danger-line)',
+                  color: 'var(--danger)',
+                }}
+              >
+                {errorMessage}
               </div>
             )}
 
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                  Username
-                </label>
-                <input
-                  type="text"
-                  required
-                  autoFocus
-                  autoCapitalize="none"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  placeholder="e.g. admin or employee name"
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition"
-                  disabled={isLoading}
-                />
-              </div>
+            {/* Primary Sign In Button */}
+            <button
+              type="submit"
+              disabled={isLoading}
+              className="w-full mt-2 h-[48px] rounded-[8px] text-[14px] font-bold cursor-pointer flex items-center justify-center gap-2 transition-all hover:opacity-90 active:scale-[0.99] disabled:opacity-50"
+              style={{
+                ...BTN_PRIMARY,
+                height: 48,
+              }}
+            >
+              <span>{isLoading ? 'Opening station…' : 'Sign in to Print Station'}</span>
+              <span style={KBD_ON_FILL}>Enter</span>
+            </button>
+          </form>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                  Password
-                </label>
-                <input
-                  type="password"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••"
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition"
-                  disabled={isLoading}
-                />
-              </div>
-
-              <div className="pt-2">
-                <button
-                  type="submit"
-                  disabled={isLoading}
-                  className="w-full flex justify-center items-center py-2.5 px-4 border border-transparent rounded-xl shadow-sm text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500 transition disabled:opacity-50 cursor-pointer"
-                >
-                  {isLoading ? (
-                    <span className="flex items-center gap-2">
-                      <svg className="animate-spin h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-                      </svg>
-                      Authenticating...
-                    </span>
-                  ) : (
-                    'Sign In to Print Station'
-                  )}
-                </button>
-              </div>
-            </form>
-
-            <div className="mt-6 pt-5 border-t border-slate-100 flex items-center justify-between text-xs">
-              <span className="text-slate-400">
-                Database:{' '}
-                <span className="font-semibold text-slate-600">
-                  {shop?.source === 'pos_db' ? 'Synced (retail.db)' : 'Standalone'}
-                </span>
+          {/* Footer inside card */}
+          <div
+            className="flex items-center justify-between text-[11px] mt-6 pt-4 border-t"
+            style={{ borderColor: 'var(--rule)', color: 'var(--ink3)' }}
+          >
+            <span>
+              Database:{' '}
+              <span className="font-semibold text-[var(--ink2)]" style={{ fontFamily: MONO }}>
+                {shop?.source === 'pos_db' ? 'Synced (retail.db)' : 'Standalone'}
               </span>
+            </span>
 
-              {onBackToCustomerView && (
-                <button
-                  type="button"
-                  onClick={onBackToCustomerView}
-                  className="text-emerald-600 hover:text-emerald-700 font-semibold transition"
-                >
-                  ← Customer View
-                </button>
-              )}
-            </div>
+            {onBackToCustomerView && (
+              <button
+                type="button"
+                onClick={onBackToCustomerView}
+                className="font-semibold cursor-pointer hover:underline transition"
+                style={{ color: 'var(--accent)' }}
+              >
+                ← Customer View
+              </button>
+            )}
           </div>
         </div>
-      </div>
+      </main>
+
+      {/* Subtle brand label at the bottom of the screen */}
+      <footer className="py-2.5 text-center shrink-0">
+        <span
+          className="font-mono text-[10px] tracking-wider select-none pointer-events-none uppercase font-bold"
+          style={{ color: 'var(--ink4)', opacity: 0.4 }}
+        >
+          {shop?.shopName || 'J MART'} • QUICK PRINT STATION
+        </span>
+      </footer>
     </div>
   );
 };
