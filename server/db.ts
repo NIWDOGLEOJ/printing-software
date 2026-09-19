@@ -11,8 +11,10 @@ const __dirname = path.dirname(__filename);
 const dbPath = path.resolve(__dirname, '../print_jobs.db');
 export const db = new Database(dbPath);
 
-// Enable WAL mode
+// Enable WAL mode & performance pragmas for Linux concurrency
 db.pragma('journal_mode = WAL');
+db.pragma('synchronous = NORMAL');
+db.pragma('busy_timeout = 5000');
 
 // Initialize schema
 db.exec(`

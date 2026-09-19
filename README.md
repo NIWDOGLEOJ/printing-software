@@ -89,7 +89,7 @@ sudo npm install -g pnpm
 
 #### 2. Install CUPS Printing System & Driver Packages
 ```bash
-sudo pacman -S --needed cups cups-pdf cups-filters ghostscript gsfonts foomatic-db foomatic-db-engine
+sudo pacman -S --needed cups cups-pdf cups-filters ghostscript gsfonts poppler imagemagick foomatic-db foomatic-db-engine
 ```
 
 #### 3. Install Avahi for Network Printer Discovery (mDNS / DNS-SD)
@@ -177,7 +177,15 @@ pnpm start
 
 To automatically launch the Print Station on laptop boot in the background:
 
-1. Copy the included service file to your systemd system folder:
+### Option A: 1-Click Automated Installer (Recommended)
+Run the automated installer, which detects your user, Node/pnpm executable, and working directory, sets up permissions, and enables the service:
+```bash
+pnpm run service:install
+# Or: bash scripts/install-systemd-service.sh
+```
+
+### Option B: Manual Configuration
+1. Copy the template service file:
    ```bash
    sudo cp scripts/print-station.service /etc/systemd/system/
    ```
@@ -194,10 +202,43 @@ To automatically launch the Print Station on laptop boot in the background:
    sudo systemctl enable --now print-station.service
    ```
 
-4. Check service status:
+4. Service management commands:
    ```bash
-   systemctl status print-station.service
+   # Check live service status
+   sudo systemctl status print-station.service
+
+   # View live streaming logs
+   sudo journalctl -u print-station.service -f
+
+   # Restart after updating
+   sudo systemctl restart print-station.service
    ```
+
+---
+
+## 🛡️ Linux Firewall Configuration (Optional)
+
+If your Linux laptop runs a firewall (such as `ufw` or `firewalld`), allow incoming traffic on port 4000 for walk-in customers on the local Wi-Fi, and port 631 for CUPS:
+
+### Using UFW (Uncomplicated Firewall)
+```bash
+# Allow customer upload portal
+sudo ufw allow 4000/tcp comment "Print Station Web Portal"
+
+# Allow CUPS network printing
+sudo ufw allow 631/tcp comment "CUPS Printing"
+
+# Allow mDNS network auto-discovery
+sudo ufw allow 5353/udp comment "mDNS Avahi Discovery"
+```
+
+### Using firewalld
+```bash
+sudo firewall-cmd --permanent --add-port=4000/tcp
+sudo firewall-cmd --permanent --add-service=ipp
+sudo firewall-cmd --permanent --add-service=mdns
+sudo firewall-cmd --reload
+```
 
 ---
 

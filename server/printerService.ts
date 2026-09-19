@@ -2,6 +2,7 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import { PrinterInfo, ColorMode, SidesMode, OrientationMode } from '../shared/types.js';
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import { getPricingSettings } from './db.js';
@@ -9,7 +10,14 @@ import { getPricingSettings } from './db.js';
 const execFileAsync = promisify(execFile);
 
 function findBinary(name: string): string {
-  const candidates = [`/usr/bin/${name}`, `/usr/sbin/${name}`, `/bin/${name}`, `/usr/local/bin/${name}`];
+  const candidates = [
+    `/usr/bin/${name}`,
+    `/usr/sbin/${name}`,
+    `/bin/${name}`,
+    `/sbin/${name}`,
+    `/usr/local/bin/${name}`,
+    `/usr/local/sbin/${name}`,
+  ];
   for (const c of candidates) {
     if (fs.existsSync(c)) return c;
   }
@@ -152,17 +160,46 @@ export async function preparePrintableFile(filePath: string): Promise<{ printabl
       `print_temp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.pdf`
     );
 
-    // Try macOS native sips first for fast conversion (supports WebP, PNG, JPG, etc.)
+    // 1. Try macOS native sips first for fast conversion (supports WebP, PNG, JPG, etc.)
+    if (process.platform === 'darwin') {
+      try {
+        await execFileAsync('/usr/bin/sips', ['-s', 'format', 'pdf', filePath, '--out', tempPdfPath]);
+        if (fs.existsSync(tempPdfPath) && fs.statSync(tempPdfPath).size > 0) {
+          return { printablePath: tempPdfPath, isTemp: true };
+        }
+      } catch (err) {
+        // fallback
+      }
+    }
+
+    // 2. Try Linux ImageMagick (magick or convert) for high-speed conversion (WebP, PNG, JPG, BMP, TIFF)
     try {
-      await execFileAsync('/usr/bin/sips', ['-s', 'format', 'pdf', filePath, '--out', tempPdfPath]);
-      if (fs.existsSync(tempPdfPath) && fs.statSync(tempPdfPath).size > 0) {
-        return { printablePath: tempPdfPath, isTemp: true };
+      const magickCandidate = findBinary('magick');
+      const convertCandidate = findBinary('convert');
+      let imgTool: string | null = null;
+      if (fs.existsSync(magickCandidate)) {
+        imgTool = magickCandidate;
+      } else if (fs.existsSync(convertCandidate)) {
+        imgTool = convertCandidate;
+      }
+
+      if (imgTool) {
+        await execFileAsync(imgTool, [
+          filePath,
+          '-density', '300',
+          '-page', 'a4',
+          '-gravity', 'center',
+          tempPdfPath,
+        ]);
+        if (fs.existsSync(tempPdfPath) && fs.statSync(tempPdfPath).size > 0) {
+          return { printablePath: tempPdfPath, isTemp: true };
+        }
       }
     } catch (err) {
       // fallback to pdf-lib
     }
 
-    // Fallback to embedding via pdf-lib for JPG / PNG
+    // 3. Fallback to embedding via pdf-lib for JPG / PNG
     try {
       const pdfDoc = await PDFDocument.create();
       const page = pdfDoc.addPage([595.28, 841.89]); // A4 in points
@@ -256,8 +293,8 @@ export async function printFile(filePath: string, options: PrintJobOptions): Pro
     // Real CUPS print execution
     const args: string[] = ['-d', targetPrinter];
 
-    // Explicit standard media size (A4) - ensures printer matches loaded paper tray without scaling errors
-    args.push('-o', 'media=A4', '-o', 'PageSize=A4');
+    // Explicit standard media size (A4) & fit-to-page - prevents margin clipping on Linux CUPS rasterizers
+    args.push('-o', 'media=A4', '-o', 'PageSize=A4', '-o', 'fit-to-page');
 
     // Copies & Collation
     const copies = Math.max(1, options.copies || 1);
@@ -361,7 +398,12 @@ export async function createTestPrintFile(printerName: string): Promise<string> 
 
   addLine('Target Printer:', printerName);
   addLine('Date & Time:', new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }));
-  addLine('System:', 'macOS CUPS Network Printing');
+  const osLabel = process.platform === 'linux'
+    ? `Linux (${os.type()} ${os.release()}) CUPS Printing`
+    : process.platform === 'darwin'
+    ? 'macOS CUPS Network Printing'
+    : 'CUPS Network Printing';
+  addLine('System:', osLabel);
   addLine('Alignment:', 'Normal A4 Centered');
   addLine('Status:', 'Printer Connected and Operational');
 

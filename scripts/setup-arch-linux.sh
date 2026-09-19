@@ -19,6 +19,8 @@ sudo pacman -S --needed --noconfirm \
   cups-filters \
   ghostscript \
   gsfonts \
+  poppler \
+  imagemagick \
   avahi \
   nss-mdns
 

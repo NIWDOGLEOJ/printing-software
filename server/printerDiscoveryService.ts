@@ -8,7 +8,14 @@ import { getAllPrinterProfiles, updatePrinterProfile, upsertPrinterProfile } fro
 const execFileAsync = promisify(execFile);
 
 function findBinary(name: string): string {
-  const candidates = [`/usr/bin/${name}`, `/usr/sbin/${name}`, `/bin/${name}`, `/usr/local/bin/${name}`];
+  const candidates = [
+    `/usr/bin/${name}`,
+    `/usr/sbin/${name}`,
+    `/bin/${name}`,
+    `/sbin/${name}`,
+    `/usr/local/bin/${name}`,
+    `/usr/local/sbin/${name}`,
+  ];
   for (const c of candidates) {
     if (fs.existsSync(c)) return c;
   }
@@ -206,7 +213,8 @@ async function discoverBonjourNetworkPrinters(): Promise<Partial<DiscoveredPrint
 }
 
 /**
- * Discover network printers on Linux via Avahi (avahi-browse -r -t -p _ipp._tcp)
+ * Discover network printers on Linux via Avahi across multiple printer service types:
+ * _ipp._tcp, _ipps._tcp, _printer._tcp, _pdl-datastream._tcp
  */
 async function discoverAvahiNetworkPrinters(): Promise<Partial<DiscoveredPrinter>[]> {
   const avahiCmd = findBinary('avahi-browse');
@@ -214,25 +222,39 @@ async function discoverAvahiNetworkPrinters(): Promise<Partial<DiscoveredPrinter
 
   const discovered: Partial<DiscoveredPrinter>[] = [];
   try {
-    const { stdout } = await execFileAsync(avahiCmd, ['-r', '-t', '-p', '_ipp._tcp'], { timeout: 2500 });
+    const { stdout } = await execFileAsync(
+      avahiCmd,
+      ['-r', '-t', '-p', '_ipp._tcp', '_ipps._tcp', '_printer._tcp', '_pdl-datastream._tcp'],
+      { timeout: 3500 }
+    );
     const lines = stdout.split('\n');
+    const seenIds = new Set<string>();
+
     for (const line of lines) {
       if (!line.startsWith('=')) continue;
       const parts = line.split(';');
       if (parts.length < 9) continue;
 
       const rawName = parts[3]?.trim().replace(/\\032/g, ' ') || 'Network Printer';
+      const serviceType = parts[4]?.trim() || '_ipp._tcp';
       const hostname = parts[6]?.trim() || '';
       const ipAddress = parts[7]?.trim() || '';
       const port = parseInt(parts[8]?.trim(), 10) || 631;
       const rawTxt = parts.slice(9).join(';');
 
-      const isColor = /Color=T/i.test(rawTxt) || /ColorMode=Color/i.test(rawTxt);
-      const isDuplex = /Duplex=T/i.test(rawTxt) || /sides=two/i.test(rawTxt);
+      const key = `${rawName}_${ipAddress || hostname}`;
+      if (seenIds.has(key)) continue;
+      seenIds.add(key);
+
+      const isColor = /Color=T/i.test(rawTxt) || /ColorMode=Color/i.test(rawTxt) || /URF=.*SRGB/i.test(rawTxt);
+      const isDuplex = /Duplex=T/i.test(rawTxt) || /sides=two/i.test(rawTxt) || /DM[1-9]/i.test(rawTxt);
       const adminMatch = rawTxt.match(/adminurl="?([^";\s]+)"?/i);
       const adminUrl = adminMatch ? adminMatch[1] : (ipAddress ? `http://${ipAddress}/` : undefined);
 
       const isOnline = ipAddress ? await testTcpPort(ipAddress, port, 800) : false;
+
+      const scheme = serviceType.includes('ipps') ? 'ipps' : serviceType.includes('pdl') ? 'socket' : 'ipp';
+      const pathSuffix = scheme === 'socket' ? '' : '/ipp/print';
 
       discovered.push({
         id: `net:${rawName}_${ipAddress || hostname}`,
@@ -243,7 +265,7 @@ async function discoverAvahiNetworkPrinters(): Promise<Partial<DiscoveredPrinter
         ipAddress: ipAddress || undefined,
         hostname: hostname || undefined,
         port,
-        deviceUri: `ipp://${ipAddress || hostname}:${port}/ipp/print`,
+        deviceUri: `${scheme}://${ipAddress || hostname}:${port}${pathSuffix}`,
         supportsColor: isColor,
         supportsDuplex: isDuplex,
         isOnline,
@@ -260,7 +282,7 @@ async function discoverAvahiNetworkPrinters(): Promise<Partial<DiscoveredPrinter
 }
 
 /**
- * Discover hardware & backend connected devices via lpinfo -v (USB, direct, network)
+ * Discover hardware & backend connected devices via lpinfo -v (USB direct & CUPS network probes)
  */
 async function discoverLpinfoDevices(): Promise<Partial<DiscoveredPrinter>[]> {
   const discovered: Partial<DiscoveredPrinter>[] = [];
@@ -275,13 +297,19 @@ async function discoverLpinfoDevices(): Promise<Partial<DiscoveredPrinter>[]> {
       const kind = match[1].toLowerCase();
       const uri = match[2].trim();
 
-      // USB Direct connected printer
+      // 1. USB Direct connected printer
       if (kind === 'direct' && uri.startsWith('usb://')) {
-        // e.g. usb://Canon/GX4000%20series?serial=...
-        const urlObj = new URL(uri);
-        const mfg = decodeURIComponent(urlObj.hostname || 'USB Printer');
-        const mdl = decodeURIComponent(urlObj.pathname.replace(/^\//, '') || 'Printer');
-        const fullName = `${mfg} ${mdl}`.trim();
+        let fullName = 'USB Printer';
+        let mfg = 'USB';
+        let mdl = 'Printer';
+        try {
+          const urlObj = new URL(uri);
+          mfg = decodeURIComponent(urlObj.hostname || 'USB Printer');
+          mdl = decodeURIComponent(urlObj.pathname.replace(/^\//, '') || 'Printer');
+          fullName = `${mfg} ${mdl}`.trim();
+        } catch {
+          fullName = uri.split('//')[1]?.split('?')[0] || 'USB Printer';
+        }
 
         discovered.push({
           id: `usb:${uri}`,
@@ -294,6 +322,62 @@ async function discoverLpinfoDevices(): Promise<Partial<DiscoveredPrinter>[]> {
           supportsDuplex: true,
           isOnline: true,
           status: 'online',
+          lastSeen: new Date().toISOString(),
+        });
+      }
+
+      // 2. Network printers detected via CUPS backend probes (dnssd, socket, ipp, ipps, lpd)
+      if (
+        kind === 'network' &&
+        (uri.startsWith('socket://') ||
+          uri.startsWith('ipp://') ||
+          uri.startsWith('ipps://') ||
+          uri.startsWith('dnssd://') ||
+          uri.startsWith('lpd://'))
+      ) {
+        let hostOrName = '';
+        let port = 631;
+        let isOnline = true;
+        let displayName = '';
+
+        try {
+          if (uri.startsWith('socket://')) {
+            const urlObj = new URL(uri);
+            hostOrName = urlObj.hostname;
+            port = parseInt(urlObj.port, 10) || 9100;
+            displayName = `Network Printer (${hostOrName})`;
+          } else if (uri.startsWith('ipp://') || uri.startsWith('ipps://')) {
+            const urlObj = new URL(uri);
+            hostOrName = urlObj.hostname;
+            port = parseInt(urlObj.port, 10) || (uri.startsWith('ipps') ? 443 : 631);
+            displayName = `IPP Printer (${hostOrName})`;
+          } else if (uri.startsWith('dnssd://')) {
+            const cleanDnssd = decodeURIComponent(uri.replace('dnssd://', '').split('.')[0] || '');
+            displayName = cleanDnssd || 'Network Printer';
+          }
+        } catch {}
+
+        if (!displayName) {
+          displayName = uri.replace(/^[a-z]+:\/\//i, '').split('/')[0] || 'Network Printer';
+        }
+
+        if (hostOrName && /^[0-9.]+$/.test(hostOrName)) {
+          isOnline = await testTcpPort(hostOrName, port, 600);
+        }
+
+        discovered.push({
+          id: `lpinfo:${uri}`,
+          name: displayName,
+          model: displayName,
+          manufacturer: displayName.split(' ')[0] || 'Network',
+          connectionType: 'network_bonjour',
+          deviceUri: uri,
+          ipAddress: /^[0-9.]+$/.test(hostOrName) ? hostOrName : undefined,
+          port,
+          supportsColor: true,
+          supportsDuplex: true,
+          isOnline,
+          status: isOnline ? 'online' : 'offline',
           lastSeen: new Date().toISOString(),
         });
       }

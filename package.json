@@ -12,6 +12,8 @@
     "build": "tsc --noEmit && vite build && tsc -p tsconfig.server.json",
     "start": "node dist-server/server/index.js",
     "tunnel": "bash scripts/run-tunnel.sh",
+    "setup:linux": "bash scripts/setup-arch-linux.sh",
+    "service:install": "bash scripts/install-systemd-service.sh",
     "test": "vitest run --fileParallelism=false"
   },
   "dependencies": {
