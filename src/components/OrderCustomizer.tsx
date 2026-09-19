@@ -389,36 +389,42 @@ export const OrderCustomizer: React.FC<OrderCustomizerProps> = ({ token, onBackT
                 type="button"
                 disabled={isReadOnly}
                 onClick={() => setColorMode('bw')}
-                className={`flex flex-col items-center justify-center p-3 rounded-lg border text-center transition cursor-pointer ${
+                className={`flex flex-col items-center justify-center p-3.5 rounded-xl border-2 text-center transition cursor-pointer min-h-[92px] ${
                   colorMode === 'bw'
-                    ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)] ring-1 ring-[var(--accent)]'
+                    ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)] ring-1 ring-[var(--accent)] shadow-xs'
                     : 'border-[var(--border2)] bg-[var(--sub)] text-[var(--ink2)] hover:border-[var(--border)]'
                 } ${isReadOnly ? 'opacity-60 cursor-not-allowed' : ''}`}
               >
-                <div className="text-xs font-bold">Black & White</div>
-                <div className="text-[10px] font-mono opacity-75 mt-0.5">Mono Greyscale</div>
+                <span className="text-xl mb-1">⬛</span>
+                <div className="text-xs font-bold text-[var(--ink)]">Black & White</div>
+                <div className="text-[10px] font-mono text-[var(--ink3)] mt-0.5">
+                  {inr(pricing?.bw_price_per_page || 2)}/page
+                </div>
               </button>
 
               <button
                 type="button"
                 disabled={isReadOnly || isColorDisabled}
                 onClick={() => setColorMode('color')}
-                className={`relative flex flex-col items-center justify-center p-3 rounded-lg border text-center transition cursor-pointer ${
+                className={`relative flex flex-col items-center justify-center p-3.5 rounded-xl border-2 text-center transition cursor-pointer min-h-[92px] ${
                   colorMode === 'color'
-                    ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)] ring-1 ring-[var(--accent)]'
+                    ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)] ring-1 ring-[var(--accent)] shadow-xs'
                     : 'border-[var(--border2)] bg-[var(--sub)] text-[var(--ink2)] hover:border-[var(--border)]'
                 } ${isColorDisabled || isReadOnly ? 'opacity-50 cursor-not-allowed bg-red-950/20' : ''}`}
               >
                 {isColorDisabled && (
-                  <span className="absolute -top-2 right-2 px-1.5 py-0.5 rounded bg-[var(--danger-soft)] text-[var(--danger)] text-[9px] font-mono font-bold border border-[var(--danger-line)]">
-                    Maintenance
+                  <span className="absolute -top-2 right-2 px-1.5 py-0.5 rounded-full bg-[var(--danger-soft)] text-[var(--danger)] text-[9px] font-mono font-bold border border-[var(--danger-line)] shadow-xs">
+                    Unavailable
                   </span>
                 )}
-                <div className="text-xs font-bold flex items-center gap-1">
-                  <span>Full Color</span>
+                <span className="text-xl mb-1">🎨</span>
+                <div className="text-xs font-bold flex items-center gap-1 text-[var(--ink)]">
+                  <span>Color Print</span>
                   <Sparkles className="w-3 h-3 text-amber-400" />
                 </div>
-                <div className="text-[10px] font-mono opacity-75 mt-0.5">High Quality Ink</div>
+                <div className="text-[10px] font-mono text-[var(--ink3)] mt-0.5">
+                  {isColorDisabled ? 'Unavailable' : `${inr(pricing?.color_price_per_page || 10)}/page`}
+                </div>
               </button>
             </div>
           </div>
@@ -442,36 +448,42 @@ export const OrderCustomizer: React.FC<OrderCustomizerProps> = ({ token, onBackT
                 type="button"
                 disabled={isReadOnly}
                 onClick={() => setSides('single')}
-                className={`flex flex-col items-center justify-center p-3 rounded-lg border text-center transition cursor-pointer ${
+                className={`flex flex-col items-center justify-center p-3.5 rounded-xl border-2 text-center transition cursor-pointer min-h-[92px] ${
                   sides === 'single'
-                    ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)] ring-1 ring-[var(--accent)]'
+                    ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)] ring-1 ring-[var(--accent)] shadow-xs'
                     : 'border-[var(--border2)] bg-[var(--sub)] text-[var(--ink2)] hover:border-[var(--border)]'
                 } ${isReadOnly ? 'opacity-60 cursor-not-allowed' : ''}`}
               >
-                <div className="text-xs font-bold">Single-Sided</div>
-                <div className="text-[10px] font-mono opacity-75 mt-0.5">1 page per sheet</div>
+                <span className="text-xl mb-1">📄</span>
+                <div className="text-xs font-bold text-[var(--ink)]">Single Sided</div>
+                <div className="text-[10px] font-mono text-[var(--ink3)] mt-0.5">1 page per sheet</div>
               </button>
 
               <button
                 type="button"
                 disabled={isReadOnly || isDuplexDisabled}
                 onClick={() => setSides('duplex')}
-                className={`relative flex flex-col items-center justify-center p-3 rounded-lg border text-center transition cursor-pointer ${
+                className={`relative flex flex-col items-center justify-center p-3.5 rounded-xl border-2 text-center transition cursor-pointer min-h-[92px] ${
                   sides === 'duplex'
-                    ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)] ring-1 ring-[var(--accent)]'
+                    ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)] ring-1 ring-[var(--accent)] shadow-xs'
                     : 'border-[var(--border2)] bg-[var(--sub)] text-[var(--ink2)] hover:border-[var(--border)]'
                 } ${isDuplexDisabled || isReadOnly ? 'opacity-50 cursor-not-allowed' : ''}`}
               >
-                {isDuplexDisabled && (
-                  <span className="absolute -top-2 right-2 px-1.5 py-0.5 rounded bg-[var(--danger-soft)] text-[var(--danger)] text-[9px] font-mono font-bold border border-[var(--danger-line)]">
-                    Disabled
+                {isDuplexDisabled ? (
+                  <span className="absolute -top-2 right-2 px-1.5 py-0.5 rounded-full bg-[var(--danger-soft)] text-[var(--danger)] text-[9px] font-mono font-bold border border-[var(--danger-line)] shadow-xs">
+                    Unavailable
+                  </span>
+                ) : (
+                  <span className="absolute -top-2 right-2 px-1.5 py-0.5 rounded-full bg-[var(--ok-soft)] text-[var(--ok)] text-[9px] font-mono font-bold border border-[var(--ok-line)] shadow-xs">
+                    Saves Paper
                   </span>
                 )}
-                <div className="text-xs font-bold flex items-center gap-1">
+                <span className="text-xl mb-1">📑</span>
+                <div className="text-xs font-bold flex items-center gap-1 text-[var(--ink)]">
                   <Layers className="w-3.5 h-3.5" />
                   <span>Front & Back</span>
                 </div>
-                <div className="text-[10px] font-mono opacity-75 mt-0.5">Two-sided (Save Paper)</div>
+                <div className="text-[10px] font-mono text-[var(--ink3)] mt-0.5">Two-sided (Duplex)</div>
               </button>
             </div>
           </div>

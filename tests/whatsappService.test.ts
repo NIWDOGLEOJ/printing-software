@@ -383,17 +383,20 @@ describe('WhatsApp Integration & Database Support', () => {
     };
 
     const receipt = formatWhatsAppReceipt(mockJob, 'https://station.example.com');
-    expect(receipt).toContain('📄 *Received:* thesis_report.pdf (12 pages)');
-    expect(receipt).toContain('⚙️ *Options:* B/W • Front & Back • Pages 1-6 • 2 Copies');
-    expect(receipt).toContain('💰 *Total:* *₹18.00* (Rupees Eighteen Only)');
-    expect(receipt).toContain('🎫 *Token:* *#P-202*');
-    expect(receipt).toContain('✏️ *To change options, simply reply:*');
-    expect(receipt).toContain('• "Color" or "BW"');
-    expect(receipt).toContain('• "Front and back" or "Single"');
-    expect(receipt).toContain('• "Pages 1-5" (specific pages)');
-    expect(receipt).toContain('• "2 copies"');
-    expect(receipt).toContain('• Or reply 1, 2, 3, 4 for quick options');
+    expect(receipt).toContain('📄 Received: thesis_report.pdf (12 pages)');
+    expect(receipt).toContain('💰 Estimated: ₹18.00 (B/W • Front & Back • 2 Copies • Pages 1-6)');
+    expect(receipt).toContain('🎫 Token: #P-202');
+    expect(receipt).toContain('👉 📱 Tap to customize in 1-tap (No typing needed):');
     expect(receipt).toContain('https://station.example.com/order/P-202');
+    expect(receipt).toContain('(Select B/W or Color, Single or Both sides, pages & copies visually!)');
+    expect(receipt).toContain('⚡ Or quick-reply with a number:');
+    expect(receipt).toContain('1️⃣ B/W Single  2️⃣ B/W Duplex  3️⃣ Color Single  4️⃣ Color Duplex');
+
+    const { formatWhatsAppUpdateReceipt } = await import('../server/whatsappService.js');
+    const updateReceipt = formatWhatsAppUpdateReceipt(mockJob, 'https://station.example.com');
+    expect(updateReceipt).toContain('✅ *Options Updated!*');
+    expect(updateReceipt).toContain('📄 Received: thesis_report.pdf (12 pages)');
+    expect(updateReceipt).toContain('https://station.example.com/order/P-202');
   });
 
   it('updates order options via PATCH /api/jobs/token/:token/options and recalculates cost', async () => {

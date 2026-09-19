@@ -16,6 +16,7 @@ import {
   Trash2,
   ChevronDown,
   ChevronUp,
+  ChevronRight,
 } from 'lucide-react';
 import {
   ShopDetails,
@@ -31,6 +32,7 @@ import { fetchShopDetails, fetchSettings, fetchEffectivePricing, uploadJob, conn
 import { calculatePrintCost, DEFAULT_PRICING } from '../utils/costCalculator.js';
 import { formatCurrency, formatFileSize } from '../utils/formatters.js';
 import { useTheme } from '../theme.js';
+import { PrintConfigModal } from './PrintConfigModal.js';
 
 interface UploadedFileItem {
   id: string;
@@ -61,6 +63,10 @@ export const CustomerPortal: React.FC = () => {
   const [masterCopies, setMasterCopies] = useState<number>(1);
   const [pageRangeMode, setPageRangeMode] = useState<'all' | 'custom'>('all');
   const [customRange, setCustomRange] = useState<string>('');
+
+  // Print Configuration Modal state
+  const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
+  const [activeModalFileId, setActiveModalFileId] = useState<string | null>(null);
 
   // Per-file customization toggle
   const [showPerFileSettings, setShowPerFileSettings] = useState(false);
@@ -189,6 +195,65 @@ export const CustomerPortal: React.FC = () => {
     }
 
     setFiles((prev) => [...prev, ...newItems]);
+
+    // Automatically pop up visual configuration modal when files are dropped or selected
+    if (newItems.length > 0) {
+      setActiveModalFileId(newItems[0].id);
+      setIsConfigModalOpen(true);
+    }
+  };
+
+  const handleApplyModalConfig = (config: {
+    colorMode: ColorMode;
+    sides: SidesMode;
+    orientation: OrientationMode;
+    copies: number;
+    pageRange: string;
+    applyToAll: boolean;
+    targetFileId?: string;
+  }) => {
+    if (config.applyToAll) {
+      setMasterColorMode(config.colorMode);
+      setMasterSides(config.sides);
+      setMasterOrientation(config.orientation);
+      setMasterCopies(config.copies);
+      if (config.pageRange === 'all') {
+        setPageRangeMode('all');
+        setCustomRange('');
+      } else {
+        setPageRangeMode('custom');
+        setCustomRange(config.pageRange);
+      }
+      setFiles((prev) =>
+        prev.map((f) => ({
+          ...f,
+          customOptions: {
+            colorMode: config.colorMode,
+            sides: config.sides,
+            orientation: config.orientation,
+            copies: config.copies,
+            pageRange: config.pageRange,
+          },
+        }))
+      );
+    } else if (config.targetFileId) {
+      setFiles((prev) =>
+        prev.map((f) => {
+          if (f.id !== config.targetFileId) return f;
+          return {
+            ...f,
+            customOptions: {
+              ...f.customOptions,
+              colorMode: config.colorMode,
+              sides: config.sides,
+              orientation: config.orientation,
+              copies: config.copies,
+              pageRange: config.pageRange,
+            },
+          };
+        })
+      );
+    }
   };
 
   const handleRemoveFile = (id: string) => {
@@ -506,53 +571,110 @@ export const CustomerPortal: React.FC = () => {
 
               {/* Uploaded Documents List */}
               {files.length > 0 && (
-                <div className="space-y-2 mb-4">
-                  {files.map((item, idx) => (
-                    <div
-                      key={item.id}
-                      className="border border-[var(--accent-line)] bg-[var(--accent-soft)] rounded-xl p-3 flex flex-wrap items-center justify-between gap-2"
-                    >
-                      <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                        <div className="w-8 h-8 rounded-lg bg-[var(--accent)] text-white flex items-center justify-center shrink-0 text-xs">
-                          {idx + 1}
+                <div className="space-y-2.5 mb-4">
+                  {files.map((item, idx) => {
+                    const fColor = item.customOptions?.colorMode || masterColorMode;
+                    const fSides = item.customOptions?.sides || masterSides;
+                    const fCopies = item.customOptions?.copies || masterCopies;
+                    const fRange = item.customOptions?.pageRange || activeMasterPageRange;
+
+                    const itemCost = calculatePrintCost({
+                      totalPages: item.detectedPages,
+                      pageRange: fRange,
+                      colorMode: fColor,
+                      sides: fSides,
+                      copies: fCopies,
+                      pricing,
+                    });
+
+                    return (
+                      <div
+                        key={item.id}
+                        onClick={() => {
+                          setActiveModalFileId(item.id);
+                          setIsConfigModalOpen(true);
+                        }}
+                        className="group border border-[var(--accent-line)] bg-[var(--accent-soft)] hover:bg-[var(--accent-soft2)] rounded-2xl p-3 sm:p-3.5 transition cursor-pointer shadow-xs"
+                        title="Tap to customize print options for this document"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2.5">
+                          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                            <div className="w-8 h-8 rounded-xl bg-[var(--accent)] text-white flex items-center justify-center shrink-0 text-xs font-bold font-mono shadow-xs">
+                              {idx + 1}
+                            </div>
+                            <div className="truncate">
+                              <p className="text-xs sm:text-sm font-bold text-[var(--ink)] truncate" title={item.file.name}>
+                                {item.file.name}
+                              </p>
+                              <p className="font-mono text-[11px] text-[var(--ink3)]">
+                                {formatFileSize(item.file.size)} • {item.detectedPages} page{item.detectedPages > 1 ? 's' : ''}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2 shrink-0" onClick={(e) => e.stopPropagation()}>
+                            {/* Pages counter */}
+                            <div className="flex items-center gap-1 text-xs text-[var(--ink2)] bg-[var(--panel)] px-2 py-1 rounded-xl border border-[var(--border)]">
+                              <span className="font-mono text-[10px] text-[var(--ink3)]">Pgs:</span>
+                              <input
+                                type="number"
+                                min={1}
+                                max={9999}
+                                value={item.detectedPages}
+                                onChange={(e) => handleUpdateFilePages(item.id, parseInt(e.target.value, 10) || 1)}
+                                className="w-10 text-center font-mono font-bold text-[var(--ink)] bg-transparent focus:outline-none"
+                                title="Confirm page count"
+                              />
+                            </div>
+
+                            {/* Remove file button */}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleRemoveFile(item.id);
+                              }}
+                              title="Remove this document"
+                              className="p-1.5 rounded-xl text-[var(--ink3)] hover:text-[var(--danger)] hover:bg-[var(--danger-soft)] transition cursor-pointer"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
                         </div>
-                        <div className="truncate">
-                          <p className="text-xs sm:text-sm font-bold text-[var(--ink)] truncate" title={item.file.name}>
-                            {item.file.name}
-                          </p>
-                          <p className="font-mono text-[11px] text-[var(--ink3)]">
-                            {formatFileSize(item.file.size)} • {item.detectedPages} page{item.detectedPages > 1 ? 's' : ''}
-                          </p>
+
+                        {/* Active Options Badges Row */}
+                        <div className="mt-2.5 pt-2 border-t border-[var(--accent-line)]/50 flex flex-wrap items-center justify-between gap-1.5 text-xs font-mono">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="px-2 py-0.5 rounded-lg bg-[var(--panel)] border border-[var(--border)] text-[10px] font-bold text-[var(--ink)] flex items-center gap-1">
+                              {fColor === 'color' ? '🎨 Color' : '⬛ B&W'}
+                            </span>
+                            <span className="px-2 py-0.5 rounded-lg bg-[var(--panel)] border border-[var(--border)] text-[10px] font-bold text-[var(--ink)] flex items-center gap-1">
+                              {fSides === 'duplex' ? '📑 Duplex' : '📄 Single'}
+                            </span>
+                            {fCopies > 1 && (
+                              <span className="px-2 py-0.5 rounded-lg bg-[var(--panel)] border border-[var(--border)] text-[10px] font-bold text-[var(--ink)]">
+                                ×{fCopies} sets
+                              </span>
+                            )}
+                            {fRange && fRange !== 'all' && (
+                              <span className="px-2 py-0.5 rounded-lg bg-[var(--panel)] border border-[var(--border)] text-[10px] font-bold text-[var(--ink)]">
+                                Pgs: {fRange}
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-xs text-[var(--ink)]">
+                              {formatCurrency(itemCost.totalCost)}
+                            </span>
+                            <span className="text-[10px] text-[var(--accent)] group-hover:underline flex items-center gap-0.5 font-bold">
+                              Change <ChevronRight className="w-3 h-3" />
+                            </span>
+                          </div>
                         </div>
                       </div>
-
-                      <div className="flex items-center gap-2 shrink-0">
-                        {/* Pages counter */}
-                        <div className="flex items-center gap-1 text-xs text-[var(--ink2)] bg-[var(--panel)] px-2 py-0.5 rounded-lg border border-[var(--border)]">
-                          <span className="font-mono text-[10px]">Pgs:</span>
-                          <input
-                            type="number"
-                            min={1}
-                            max={9999}
-                            value={item.detectedPages}
-                            onChange={(e) => handleUpdateFilePages(item.id, parseInt(e.target.value, 10) || 1)}
-                            className="w-10 text-center font-mono font-bold text-[var(--ink)] bg-transparent focus:outline-none"
-                            title="Confirm page count"
-                          />
-                        </div>
-
-                        {/* Remove file button */}
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveFile(item.id)}
-                          title="Remove this document"
-                          className="p-1 rounded-lg text-[var(--ink3)] hover:text-[var(--danger)] hover:bg-[var(--danger-soft)] transition cursor-pointer"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
 
@@ -870,6 +992,22 @@ export const CustomerPortal: React.FC = () => {
           Documents are securely processed and automatically deleted after 24 hours.
         </p>
       </footer>
+
+      {/* Visual Print Configuration Modal */}
+      <PrintConfigModal
+        isOpen={isConfigModalOpen}
+        onClose={() => setIsConfigModalOpen(false)}
+        files={files}
+        activeFileId={activeModalFileId}
+        onSelectActiveFile={(id) => setActiveModalFileId(id)}
+        pricing={pricing}
+        masterColorMode={masterColorMode}
+        masterSides={masterSides}
+        masterOrientation={masterOrientation}
+        masterCopies={masterCopies}
+        masterPageRange={activeMasterPageRange}
+        onApply={handleApplyModalConfig}
+      />
     </div>
   );
 };

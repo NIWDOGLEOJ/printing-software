@@ -874,48 +874,38 @@ export function formatWhatsAppReceipt(
   tunnelUrl: string,
   warning?: string
 ): string {
-  const inWords = numberToWords(job.estimated_cost);
   const colorLabel = job.color_mode === 'color' ? 'Color' : 'B/W';
   const sidesLabel = job.sides === 'duplex' ? 'Front & Back' : 'Single Sided';
   const pageRangeLabel =
     !job.page_range || job.page_range.toLowerCase() === 'all'
-      ? 'All Pages'
-      : `Pages ${job.page_range}`;
-  const copiesLabel = `${job.copies} ${job.copies > 1 ? 'Copies' : 'Copy'}`;
+      ? ''
+      : ` • Pages ${job.page_range}`;
+  const copiesLabel = job.copies > 1 ? ` • ${job.copies} Copies` : '';
 
   const cleanToken = job.token.replace(/^#/, '');
   const customizerUrl = `${tunnelUrl.replace(/\/$/, '')}/order/${encodeURIComponent(cleanToken)}`;
 
-  let docInfo = `📄 *Received:* ${job.original_filename}`;
+  let docInfo = `📄 Received: ${job.original_filename}`;
   if (job.page_count && job.page_count > 0) {
     docInfo += ` (${job.page_count} ${job.page_count === 1 ? 'page' : 'pages'})`;
   }
 
   const lines = [
-    `✅ *Print Job Confirmed!*`,
-    ``,
     docInfo,
-    `⚙️ *Options:* ${colorLabel} • ${sidesLabel} • ${pageRangeLabel} • ${copiesLabel}`,
-    `💰 *Total:* *₹${job.estimated_cost.toFixed(2)}* (Rupees ${inWords} Only)`,
-    `🎫 *Token:* *${job.token}*`,
+    `💰 Estimated: ₹${job.estimated_cost.toFixed(2)} (${colorLabel} • ${sidesLabel}${copiesLabel}${pageRangeLabel})`,
+    `🎫 Token: ${job.token}`,
+    ``,
+    `👉 📱 Tap to customize in 1-tap (No typing needed):`,
+    `${customizerUrl}`,
+    `(Select B/W or Color, Single or Both sides, pages & copies visually!)`,
+    ``,
+    `⚡ Or quick-reply with a number:`,
+    `1️⃣ B/W Single  2️⃣ B/W Duplex  3️⃣ Color Single  4️⃣ Color Duplex`,
   ];
 
   if (warning) {
-    lines.push(`⚠️ _${warning}_`);
+    lines.push(``, `⚠️ _${warning}_`);
   }
-
-  lines.push(
-    ``,
-    `✏️ *To change options, simply reply:*`,
-    `• "Color" or "BW"`,
-    `• "Front and back" or "Single"`,
-    `• "Pages 1-5" (specific pages)`,
-    `• "2 copies"`,
-    `• Or reply 1, 2, 3, 4 for quick options`,
-    ``,
-    `📱 *Or customize online with 1 tap:*`,
-    `${customizerUrl}`
-  );
 
   return lines.join('\n');
 }
@@ -928,41 +918,40 @@ export function formatWhatsAppUpdateReceipt(
   tunnelUrl: string,
   warning?: string
 ): string {
-  const inWords = numberToWords(job.estimated_cost);
   const colorLabel = job.color_mode === 'color' ? 'Color' : 'B/W';
   const sidesLabel = job.sides === 'duplex' ? 'Front & Back' : 'Single Sided';
   const pageRangeLabel =
     !job.page_range || job.page_range.toLowerCase() === 'all'
-      ? 'All Pages'
-      : `Pages ${job.page_range}`;
-  const copiesLabel = `${job.copies} ${job.copies > 1 ? 'Copies' : 'Copy'}`;
+      ? ''
+      : ` • Pages ${job.page_range}`;
+  const copiesLabel = job.copies > 1 ? ` • ${job.copies} Copies` : '';
 
   const cleanToken = job.token.replace(/^#/, '');
   const customizerUrl = `${tunnelUrl.replace(/\/$/, '')}/order/${encodeURIComponent(cleanToken)}`;
 
-  let docInfo = `📄 *Document:* ${job.original_filename}`;
+  let docInfo = `📄 Received: ${job.original_filename}`;
   if (job.page_count && job.page_count > 0) {
     docInfo += ` (${job.page_count} ${job.page_count === 1 ? 'page' : 'pages'})`;
   }
 
   const lines = [
-    `✅ *Print Options Updated!*`,
+    `✅ *Options Updated!*`,
     ``,
     docInfo,
-    `⚙️ *Options:* ${colorLabel} • ${sidesLabel} • ${pageRangeLabel} • ${copiesLabel}`,
-    `💰 *Total:* *₹${job.estimated_cost.toFixed(2)}* (Rupees ${inWords} Only)`,
-    `🎫 *Token:* *${job.token}*`,
+    `💰 Estimated: ₹${job.estimated_cost.toFixed(2)} (${colorLabel} • ${sidesLabel}${copiesLabel}${pageRangeLabel})`,
+    `🎫 Token: ${job.token}`,
+    ``,
+    `👉 📱 Tap to customize in 1-tap (No typing needed):`,
+    `${customizerUrl}`,
+    `(Select B/W or Color, Single or Both sides, pages & copies visually!)`,
+    ``,
+    `⚡ Or quick-reply with a number:`,
+    `1️⃣ B/W Single  2️⃣ B/W Duplex  3️⃣ Color Single  4️⃣ Color Duplex`,
   ];
 
   if (warning) {
-    lines.push(`⚠️ _${warning}_`);
+    lines.push(``, `⚠️ _${warning}_`);
   }
-
-  lines.push(
-    ``,
-    `📱 *Customize online:*`,
-    `${customizerUrl}`
-  );
 
   return lines.join('\n');
 }
