@@ -223,6 +223,56 @@ describe('WhatsApp Integration & Database Support', () => {
     const res7 = parsePrintKeywords('copy 4 mono', 10);
     expect(res7.copies).toBe(4);
     expect(res7.colorMode).toBe('bw');
+
+    // "one sided" boundary check
+    const res8 = parsePrintKeywords('one sided', 5);
+    expect(res8.sides).toBe('single');
+
+    // "pages 1-3, 5 copies" - ensure 5 copies does not bleed into page range!
+    const res9 = parsePrintKeywords('pages 1-3, 5 copies', 10);
+    expect(res9.copies).toBe(5);
+    expect(res9.pageRange).toBe('1-3');
+    expect(res9.effectivePages).toBe(3);
+
+    // "and" / "&" separated page ranges
+    const res10 = parsePrintKeywords('pages 1 and 2', 5);
+    expect(res10.pageRange).toBe('1-2');
+    expect(res10.effectivePages).toBe(2);
+
+    const res11 = parsePrintKeywords('page 1 & 3', 5);
+    expect(res11.pageRange).toBe('1,3');
+    expect(res11.effectivePages).toBe(2);
+
+    const res12 = parsePrintKeywords('pages 1 to 3 and 5 to 7', 10);
+    expect(res12.pageRange).toBe('1-3,5-7');
+    expect(res12.effectivePages).toBe(6);
+
+    // "pg" and "pgs" abbreviations
+    const res13 = parsePrintKeywords('pg 1-4 color', 10);
+    expect(res13.pageRange).toBe('1-4');
+    expect(res13.colorMode).toBe('color');
+
+    const res14 = parsePrintKeywords('pgs 2 to 5', 10);
+    expect(res14.pageRange).toBe('2-5');
+
+    // "first page" and "last page"
+    const res15 = parsePrintKeywords('first page', 8);
+    expect(res15.pageRange).toBe('1');
+    expect(res15.effectivePages).toBe(1);
+
+    const res16 = parsePrintKeywords('last page', 8);
+    expect(res16.pageRange).toBe('8');
+    expect(res16.effectivePages).toBe(1);
+
+    // Word copies and duplex variations
+    const res17 = parsePrintKeywords('two copies back to back', 5);
+    expect(res17.copies).toBe(2);
+    expect(res17.sides).toBe('duplex');
+
+    // Isolated range syntax
+    const res18 = parsePrintKeywords('1 to 4 color', 10);
+    expect(res18.pageRange).toBe('1-4');
+    expect(res18.colorMode).toBe('color');
   });
 
   it('correctly handles numbered quick-reply shortcuts (1, 2, 3, 4)', async () => {
@@ -251,6 +301,11 @@ describe('WhatsApp Integration & Database Support', () => {
     expect(opt4.isShortcut).toBe(true);
     expect(opt4.colorMode).toBe('color');
     expect(opt4.sides).toBe('duplex');
+
+    // Bracketed and dotted shortcuts: [1], (2), 3.
+    expect(parsePrintKeywords('[1]').colorMode).toBe('bw');
+    expect(parsePrintKeywords('(2)').sides).toBe('duplex');
+    expect(parsePrintKeywords('3.').colorMode).toBe('color');
 
     // "2 copies" should NOT trigger shortcut 2, it should parse copies: 2
     const optCopies = parsePrintKeywords('2 copies');
@@ -284,6 +339,16 @@ describe('WhatsApp Integration & Database Support', () => {
     expect(r4.pageRange).toBe('4');
     expect(r4.effectivePages).toBe(1);
     expect(r4.warning).toContain('exceeds document total');
+
+    // Overlapping ranges canonical reduction: 1-3, 2-4, 8 -> 1-4,8
+    const r5 = formatPageRangeString('pages 1-3, 2-4, 8', 10);
+    expect(r5.pageRange).toBe('1-4,8');
+    expect(r5.effectivePages).toBe(5);
+
+    // 0-start clamping: 0 to 5 -> 1-5
+    const r6 = formatPageRangeString('0 to 5', 10);
+    expect(r6.pageRange).toBe('1-5');
+    expect(r6.effectivePages).toBe(5);
   });
 
   it('formats transparent WhatsApp confirmation receipt with quick-reply guide and web link', async () => {
@@ -438,6 +503,12 @@ describe('WhatsApp Integration & Database Support', () => {
       expect(updatedInDb?.copies).toBe(2);
       expect(updatedInDb?.page_range).toBe('1-4');
       expect(updatedInDb?.estimated_cost).toBe(72);
+
+      // Verify case-insensitive and numeric token lookups
+      const rawNum = token.replace(/^#P-/i, '');
+      const lowerToken = token.toLowerCase();
+      expect(getJobByToken(lowerToken)?.id).toBe(testJobId);
+      expect(getJobByToken(rawNum)?.id).toBe(testJobId);
 
       // Verify 404 on non-existent token
       const notFoundRes = await fetch(`${baseUrl}/api/jobs/token/nonexistent_token/options`, {

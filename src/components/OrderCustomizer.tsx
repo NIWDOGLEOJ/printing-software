@@ -12,8 +12,14 @@ import {
   Sparkles,
   ExternalLink,
 } from 'lucide-react';
-import { PrintJob, PricingSettings } from '../types.js';
-import { fetchJobByToken, updateJobOptionsByToken, fetchSettings, fetchShopDetails } from '../api.js';
+import { PrintJob, PricingSettings, EffectivePricing } from '../types.js';
+import {
+  fetchJobByToken,
+  updateJobOptionsByToken,
+  fetchEffectivePricing,
+  fetchSettings,
+  fetchShopDetails,
+} from '../api.js';
 import {
   MONO,
   NUM,
@@ -35,7 +41,7 @@ interface OrderCustomizerProps {
 
 export const OrderCustomizer: React.FC<OrderCustomizerProps> = ({ token, onBackToHome }) => {
   const [job, setJob] = useState<PrintJob | null>(null);
-  const [pricing, setPricing] = useState<PricingSettings | null>(null);
+  const [pricing, setPricing] = useState<PricingSettings | EffectivePricing | null>(null);
   const [shopName, setShopName] = useState('Print Station');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -55,9 +61,9 @@ export const OrderCustomizer: React.FC<OrderCustomizerProps> = ({ token, onBackT
     setLoading(true);
     setError(null);
     try {
-      const [jobData, settingsData, shopData] = await Promise.all([
+      const [jobData, pricingData, shopData] = await Promise.all([
         fetchJobByToken(token),
-        fetchSettings().catch(() => null),
+        fetchEffectivePricing().catch(() => fetchSettings().catch(() => null)),
         fetchShopDetails().catch(() => null),
       ]);
 
@@ -74,7 +80,7 @@ export const OrderCustomizer: React.FC<OrderCustomizerProps> = ({ token, onBackT
         setCustomRange('');
       }
 
-      if (settingsData) setPricing(settingsData);
+      if (pricingData) setPricing(pricingData);
       if (shopData?.shopName) setShopName(shopData.shopName);
     } catch (err: any) {
       setError(err.message || 'Could not find print order. Please verify your token.');
@@ -313,37 +319,52 @@ export const OrderCustomizer: React.FC<OrderCustomizerProps> = ({ token, onBackT
           </div>
 
           <div className="p-3.5 space-y-2">
-            {(job.files && job.files.length > 0 ? job.files : [job]).map((f: any, idx) => (
-              <div
-                key={f.id || idx}
-                className="flex items-center justify-between p-2.5 rounded-lg bg-[var(--sub)] border border-[var(--border2)]"
-              >
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <div className="w-8 h-8 rounded bg-[var(--rule2)] flex items-center justify-center text-[var(--accent)] shrink-0">
-                    <FileText className="w-4 h-4" />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="text-xs font-bold text-[var(--ink)] truncate max-w-[200px] sm:max-w-xs">
-                      {f.original_filename}
-                    </div>
-                    <div className="text-[10px] font-mono text-[var(--ink3)]">
-                      {f.page_count} {f.page_count === 1 ? 'page' : 'pages'} • {(f.file_size / 1024).toFixed(1)} KB
-                    </div>
-                  </div>
-                </div>
+            {(job.files && job.files.length > 0 ? job.files : [job]).map((f: any, idx) => {
+              const fileUrl = f.id ? `/api/jobs/${job.id}/files/${f.id}/file` : `/api/jobs/${job.id}/file`;
+              const isImage =
+                (f.mime_type && f.mime_type.startsWith('image/')) ||
+                /\.(jpg|jpeg|png|webp|bmp)$/i.test(f.original_filename);
 
-                <a
-                  href={`/api/jobs/${job.id}/file`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="px-2.5 py-1 rounded bg-[var(--panel)] border border-[var(--border)] hover:bg-[var(--rule2)] text-[11px] font-bold text-[var(--ink)] flex items-center gap-1 transition"
-                  title="View Document"
+              return (
+                <div
+                  key={f.id || idx}
+                  className="flex items-center justify-between p-2.5 rounded-lg bg-[var(--sub)] border border-[var(--border2)]"
                 >
-                  <Eye className="w-3 h-3 text-[var(--ink3)]" />
-                  <span>Preview</span>
-                </a>
-              </div>
-            ))}
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    {isImage ? (
+                      <img
+                        src={fileUrl}
+                        alt={f.original_filename}
+                        className="w-9 h-9 rounded object-cover border border-[var(--border)] shrink-0 bg-black/10"
+                      />
+                    ) : (
+                      <div className="w-9 h-9 rounded bg-[var(--rule2)] flex items-center justify-center text-[var(--accent)] shrink-0">
+                        <FileText className="w-4 h-4" />
+                      </div>
+                    )}
+                    <div className="min-w-0">
+                      <div className="text-xs font-bold text-[var(--ink)] truncate max-w-[180px] sm:max-w-xs">
+                        {f.original_filename}
+                      </div>
+                      <div className="text-[10px] font-mono text-[var(--ink3)]">
+                        {f.page_count} {f.page_count === 1 ? 'page' : 'pages'} • {(f.file_size / 1024).toFixed(1)} KB
+                      </div>
+                    </div>
+                  </div>
+
+                  <a
+                    href={fileUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="px-2.5 py-1 rounded bg-[var(--panel)] border border-[var(--border)] hover:bg-[var(--rule2)] text-[11px] font-bold text-[var(--ink)] flex items-center gap-1 transition shrink-0"
+                    title="View Document"
+                  >
+                    <Eye className="w-3 h-3 text-[var(--ink3)]" />
+                    <span>Preview</span>
+                  </a>
+                </div>
+              );
+            })}
           </div>
         </div>
 
@@ -506,6 +527,18 @@ export const OrderCustomizer: React.FC<OrderCustomizerProps> = ({ token, onBackT
                   style={FIELD}
                   className="w-full px-3 py-2 text-xs font-mono"
                 />
+                {customRange.trim() && (
+                  <div className="text-[11px] font-mono flex items-center justify-between">
+                    <span className="text-[var(--ink3)]">
+                      {effectivePagesCount} {effectivePagesCount === 1 ? 'page' : 'pages'} selected
+                    </span>
+                    {selectedPagesList.length > 0 && Math.max(...selectedPagesList) > totalDocPages && (
+                      <span className="text-[var(--warn)]">
+                        ⚠️ Clamped to max {totalDocPages} pages
+                      </span>
+                    )}
+                  </div>
+                )}
                 <div className="flex flex-wrap gap-1.5 pt-1">
                   <span className="text-[10px] text-[var(--ink3)] py-0.5">Quick chips:</span>
                   <button

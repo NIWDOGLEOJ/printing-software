@@ -173,19 +173,21 @@ export function formatPageRangeString(
     };
   }
 
-  // Strip words like "pages", "page", "p", "only"
+  // Strip words like "pages", "page", "pgs", "pg", "p", "only"
   const stripped = clean
-    .replace(/\b(?:pages?|p|only)\b/gi, '')
+    .replace(/\b(?:pages?|pgs?|p|only)\b/gi, '')
     .trim();
 
   // Normalize "to", "through", "thru", "until" to "-"
+  // and "and", "&", "+" to ","
   const normalized = stripped
     .replace(/\b(?:to|through|thru|until)\b/gi, '-')
+    .replace(/\b(?:and|&|\+)\b/gi, ',')
     .replace(/\s*-\s*/g, '-')
     .replace(/\s*,\s*/g, ',');
 
   // Extract page segments
-  const parts = normalized.split(',').map((p) => p.trim()).filter(Boolean);
+  const parts = normalized.split(/[,;\s]+/).map((p) => p.trim()).filter(Boolean);
   const pagesSet = new Set<number>();
   let hasExceeded = false;
 
@@ -194,9 +196,9 @@ export function formatPageRangeString(
       const [startStr, endStr] = part.split('-');
       const start = parseInt(startStr, 10);
       const end = parseInt(endStr, 10);
-      if (!isNaN(start) && !isNaN(end) && start > 0 && end > 0) {
-        const from = Math.min(start, end);
-        const to = Math.max(start, end);
+      if (!isNaN(start) && !isNaN(end)) {
+        const from = Math.max(1, Math.min(start, end));
+        const to = Math.max(1, Math.max(start, end));
         if (totalPages && totalPages > 0 && to > totalPages) {
           hasExceeded = true;
         }
@@ -208,11 +210,12 @@ export function formatPageRangeString(
       }
     } else {
       const pageNum = parseInt(part, 10);
-      if (!isNaN(pageNum) && pageNum > 0) {
-        if (totalPages && totalPages > 0 && pageNum > totalPages) {
+      if (!isNaN(pageNum)) {
+        const validPage = Math.max(1, pageNum);
+        if (totalPages && totalPages > 0 && validPage > totalPages) {
           hasExceeded = true;
         }
-        const clamped = totalPages ? Math.min(pageNum, totalPages) : pageNum;
+        const clamped = totalPages ? Math.min(validPage, totalPages) : validPage;
         pagesSet.add(clamped);
       }
     }
@@ -268,7 +271,7 @@ export function parsePrintKeywords(text: string, totalPages?: number): ParsedPri
   const res: ParsedPrintOptions = {};
 
   // 1. Numbered Quick-Reply Shortcuts: 1, 2, 3, 4
-  const shortcutMatch = trimmed.match(/^(?:option\s*|opt\s*|#)?([1-4])$/i);
+  const shortcutMatch = trimmed.match(/^[\(\[]?(?:option\s*|opt\s*|#)?([1-4])[\)\]\.]?$/i);
   if (shortcutMatch) {
     const num = shortcutMatch[1];
     res.isShortcut = true;
@@ -292,39 +295,94 @@ export function parsePrintKeywords(text: string, totalPages?: number): ParsedPri
     }
   }
 
-  // 2. Color Mode
-  if (/\b(bw|b\/w|black\s*(?:and|&)\s*white|black|mono(?:chrome)?|greyscale|grayscale)\b/i.test(lower)) {
-    res.colorMode = 'bw';
-  } else if (/\b(in\s+colou?r|colou?r)\b/i.test(lower)) {
-    res.colorMode = 'color';
-  }
+  let workingText = lower;
 
-  // 3. Sides Mode (Duplex vs Single)
-  if (/\b(front\s*(?:and|&)\s*back|both\s*sides?|duplex|double\s*sided?|two\s*sided?|2\s*sided?)\b/i.test(lower)) {
-    res.sides = 'duplex';
-  } else if (/\b(single\s*sided?|single|one\s*side?|1\s*sided?|1\s*side)\b/i.test(lower)) {
-    res.sides = 'single';
-  }
+  // 2. Copies (extract first to prevent numbers in "5 copies" polluting page ranges!)
+  const wordToNum: Record<string, number> = {
+    one: 1,
+    two: 2,
+    three: 3,
+    four: 4,
+    five: 5,
+    six: 6,
+    seven: 7,
+    eight: 8,
+    nine: 9,
+    ten: 10,
+    single: 1,
+    double: 2,
+    triple: 3,
+  };
 
-  // 4. Copies
-  const copiesMatch =
-    lower.match(/\b(\d+)\s*(?:copies|copy|sets?)\b/i) ||
-    lower.match(/\b(?:copies|copy|sets?)\s*[:=]?\s*(\d+)\b/i);
-  if (copiesMatch) {
-    const parsed = parseInt(copiesMatch[1], 10);
+  const copiesNumMatch =
+    workingText.match(/\b(\d+)\s*(?:copies|copy|sets?|prints?)\b/i) ||
+    workingText.match(/\b(?:copies|copy|sets?)\s*[:=]?\s*(\d+)\b/i);
+
+  if (copiesNumMatch) {
+    const parsed = parseInt(copiesNumMatch[1], 10);
     if (!isNaN(parsed) && parsed > 0 && parsed <= 500) {
       res.copies = parsed;
+      workingText = workingText.replace(copiesNumMatch[0], ' ');
+    }
+  } else {
+    const copiesWordMatch = workingText.match(
+      /\b(one|two|three|four|five|six|seven|eight|nine|ten|double|triple)\s*(?:copies|copy|sets?)\b/i
+    );
+    if (copiesWordMatch) {
+      const w = copiesWordMatch[1].toLowerCase();
+      if (wordToNum[w]) {
+        res.copies = wordToNum[w];
+        workingText = workingText.replace(copiesWordMatch[0], ' ');
+      }
     }
   }
 
+  // 3. Sides Mode (Duplex vs Single)
+  const duplexMatch = workingText.match(
+    /\b(front\s*(?:and|&)\s*back|back\s*(?:to|&)\s*back|both\s*sides?|duplex|double\s*sided?|two\s*sided?|2\s*sided?)\b/i
+  );
+  const singleMatch = workingText.match(
+    /\b(single\s*sided?|single|one\s*sided?|one\s*side|1\s*sided?|1\s*side)\b/i
+  );
+
+  if (duplexMatch) {
+    res.sides = 'duplex';
+    workingText = workingText.replace(duplexMatch[0], ' ');
+  } else if (singleMatch) {
+    res.sides = 'single';
+    workingText = workingText.replace(singleMatch[0], ' ');
+  }
+
+  // 4. Color Mode
+  const bwMatch = workingText.match(
+    /\b(bw|b\/w|black\s*(?:and|&)\s*white|black|mono(?:chrome)?|greyscale|grayscale)\b/i
+  );
+  const colorMatch = workingText.match(/\b(in\s+colou?r|colou?r)\b/i);
+
+  if (bwMatch) {
+    res.colorMode = 'bw';
+    workingText = workingText.replace(bwMatch[0], ' ');
+  } else if (colorMatch) {
+    res.colorMode = 'color';
+    workingText = workingText.replace(colorMatch[0], ' ');
+  }
+
   // 5. Page Range
-  if (/\b(?:all\s*pages?|entire\s*(?:doc|document))\b/i.test(lower) || lower === 'all') {
+  if (
+    /\b(?:all\s*pages?|entire\s*(?:doc|document))\b/i.test(workingText) ||
+    workingText.trim() === 'all'
+  ) {
     res.pageRange = 'all';
     if (totalPages && totalPages > 0) {
       res.effectivePages = totalPages;
     }
-  } else if (/\bfirst\s*(\d+)\s*pages?\b/i.test(lower)) {
-    const m = lower.match(/\bfirst\s*(\d+)\s*pages?\b/i);
+  } else if (/\bfirst\s*page\b/i.test(workingText)) {
+    const pr = formatPageRangeString('1', totalPages);
+    res.pageRange = pr.pageRange;
+    res.effectivePages = pr.effectivePages;
+    if (pr.warning) res.warning = pr.warning;
+  } else if (/\bfirst\s*(\d+)\s*pages?\b/i.test(workingText)) {
+    const m = workingText.match(/\bfirst\s*(\d+)\s*pages?\b/i);
     if (m) {
       const n = parseInt(m[1], 10);
       const pr = formatPageRangeString(`1-${n}`, totalPages);
@@ -332,8 +390,13 @@ export function parsePrintKeywords(text: string, totalPages?: number): ParsedPri
       res.effectivePages = pr.effectivePages;
       if (pr.warning) res.warning = pr.warning;
     }
-  } else if (/\blast\s*(\d+)\s*pages?\b/i.test(lower) && totalPages && totalPages > 0) {
-    const m = lower.match(/\blast\s*(\d+)\s*pages?\b/i);
+  } else if (/\blast\s*page\b/i.test(workingText) && totalPages && totalPages > 0) {
+    const pr = formatPageRangeString(`${totalPages}`, totalPages);
+    res.pageRange = pr.pageRange;
+    res.effectivePages = pr.effectivePages;
+    if (pr.warning) res.warning = pr.warning;
+  } else if (/\blast\s*(\d+)\s*pages?\b/i.test(workingText) && totalPages && totalPages > 0) {
+    const m = workingText.match(/\blast\s*(\d+)\s*pages?\b/i);
     if (m) {
       const n = parseInt(m[1], 10);
       const start = Math.max(1, totalPages - n + 1);
@@ -342,22 +405,43 @@ export function parsePrintKeywords(text: string, totalPages?: number): ParsedPri
       res.effectivePages = pr.effectivePages;
       if (pr.warning) res.warning = pr.warning;
     }
-  } else if (/\bonly\s+pages?\s*(\d+)\b/i.test(lower) || /\bpages?\s*(\d+)\s+only\b/i.test(lower)) {
-    const m = lower.match(/\bonly\s+pages?\s*(\d+)\b/i) || lower.match(/\bpages?\s*(\d+)\s+only\b/i);
-    if (m) {
-      const pageNum = parseInt(m[1], 10);
-      const pr = formatPageRangeString(`${pageNum}`, totalPages);
+  } else if (
+    /\bonly\s+pages?\s*([0-9\s,\-to&and+]+)\b/i.test(workingText) ||
+    /\bpages?\s*([0-9\s,\-to&and+]+)\s+only\b/i.test(workingText)
+  ) {
+    const m =
+      workingText.match(/\bonly\s+pages?\s*([0-9\s,\-to&and+]+)\b/i) ||
+      workingText.match(/\bpages?\s*([0-9\s,\-to&and+]+)\s+only\b/i);
+    if (m && /\d/.test(m[1])) {
+      const pr = formatPageRangeString(m[1].trim(), totalPages);
+      res.pageRange = pr.pageRange;
+      res.effectivePages = pr.effectivePages;
+      if (pr.warning) res.warning = pr.warning;
+    }
+  } else if (/\bonly\s+([0-9\s,\-to&and+]+)\b/i.test(workingText)) {
+    const m = workingText.match(/\bonly\s+([0-9\s,\-to&and+]+)\b/i);
+    if (m && /\d/.test(m[1])) {
+      const pr = formatPageRangeString(m[1].trim(), totalPages);
       res.pageRange = pr.pageRange;
       res.effectivePages = pr.effectivePages;
       if (pr.warning) res.warning = pr.warning;
     }
   } else {
-    // Check for "pages 1 to 4", "page 1-5", "p 1-3, 5", "page 2"
-    const rangeMatch = lower.match(/\b(?:pages?|p)\s*[:=]?\s*([0-9\s,\-to]+)\b/i);
+    // Check for "pages 1 to 4", "page 1-5", "p 1-3, 5", "pg 1-4", "pgs 1 to 3", "page 1 and 2"
+    const rangeMatch = workingText.match(/\b(?:pages?|pgs?|p)\s*[:=]?\s*([0-9\s,\-to&and+]+)\b/i);
     if (rangeMatch) {
       const raw = rangeMatch[1].trim();
       if (/\d/.test(raw)) {
         const pr = formatPageRangeString(raw, totalPages);
+        res.pageRange = pr.pageRange;
+        res.effectivePages = pr.effectivePages;
+        if (pr.warning) res.warning = pr.warning;
+      }
+    } else {
+      // Fallback: check for isolated explicit ranges like "1 to 4" or "1-5"
+      const explicitRangeMatch = workingText.match(/\b(\d+\s*(?:to|-)\s*\d+)\b/i);
+      if (explicitRangeMatch) {
+        const pr = formatPageRangeString(explicitRangeMatch[1].trim(), totalPages);
         res.pageRange = pr.pageRange;
         res.effectivePages = pr.effectivePages;
         if (pr.warning) res.warning = pr.warning;
@@ -683,7 +767,11 @@ async function handleIncomingWhatsAppMessage(msg: WAMessage) {
     }
 
     // 3. Multi-Option Natural Language Instructions & Shortcuts
-    const opts = parsePrintKeywords(trimmed, pendingJob.page_count);
+    const jobFilesList = getJobFiles(pendingJob.id);
+    const maxPages = jobFilesList.length > 0
+      ? Math.max(...jobFilesList.map((f) => f.page_count))
+      : (pendingJob.page_count || 1);
+    const opts = parsePrintKeywords(trimmed, maxPages);
     if (opts.colorMode || opts.sides || opts.copies || opts.pageRange) {
       const pricing = getEffectivePricing();
       let warning = opts.warning;

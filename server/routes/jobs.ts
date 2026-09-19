@@ -386,16 +386,20 @@ export function createJobsRouter(broadcast: (message: any) => void) {
       newSides = 'single';
     }
 
+    const files = getJobFiles(existing.id);
+    const maxDocPages = files.length > 0
+      ? Math.max(...files.map((f) => f.page_count))
+      : (existing.page_count || 1);
+
     let warning: string | undefined;
     if (newPageRange && newPageRange.toLowerCase() !== 'all') {
-      const parsedRange = formatPageRangeString(newPageRange, existing.page_count);
+      const parsedRange = formatPageRangeString(newPageRange, maxDocPages);
       newPageRange = parsedRange.pageRange;
       warning = parsedRange.warning;
     } else {
       newPageRange = 'all';
     }
 
-    const files = getJobFiles(existing.id);
     let totalCost = 0;
     let totalPages = 0;
     let primaryEffectivePages = existing.effective_pages;
@@ -440,7 +444,7 @@ export function createJobsRouter(broadcast: (message: any) => void) {
       job: updated,
     });
 
-    if (updated && updated.source === 'whatsapp' && updated.whatsapp_jid) {
+    if (updated && updated.whatsapp_jid) {
       sendWhatsAppOrderUpdateNotification(updated, warning).catch(console.warn);
     }
 

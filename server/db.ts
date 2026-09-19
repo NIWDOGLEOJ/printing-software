@@ -626,8 +626,21 @@ export function updateJob(id: string, updates: Partial<PrintJob>): PrintJob | un
 }
 
 export function getJobByToken(token: string): PrintJob | undefined {
-  const cleanToken = token.startsWith('#') ? token : `#${token}`;
-  const job = db.prepare('SELECT * FROM jobs WHERE token = ? OR token = ? ORDER BY created_at DESC LIMIT 1').get(token, cleanToken) as PrintJob | undefined;
+  const trimmed = token.trim();
+  const rawClean = trimmed.replace(/^#/, '');
+  const withHash = `#${rawClean}`;
+  const numericP = /^\d+$/.test(rawClean) ? `#P-${rawClean}` : withHash;
+  const pUpper = `P-${rawClean.replace(/^p-/i, '')}`;
+
+  const job = db.prepare(`
+    SELECT * FROM jobs 
+    WHERE UPPER(token) = UPPER(?) 
+       OR UPPER(token) = UPPER(?) 
+       OR UPPER(token) = UPPER(?) 
+       OR UPPER(token) = UPPER(?)
+       OR UPPER(token) = UPPER(?)
+    ORDER BY created_at DESC LIMIT 1
+  `).get(trimmed, withHash, numericP, `#${pUpper}`, pUpper) as PrintJob | undefined;
   if (!job) return undefined;
   return getJobById(job.id);
 }
