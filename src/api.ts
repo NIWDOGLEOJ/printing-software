@@ -12,6 +12,8 @@ import {
   LoginResponse,
   WhatsAppStatus,
   WhatsAppSettings,
+  ColorMode,
+  SidesMode,
 } from './types.js';
 
 const API_BASE = '/api';
@@ -467,4 +469,26 @@ export async function fetchJobByToken(token: string): Promise<PrintJob> {
   if (!res.ok) throw new Error('Failed to load print job for token');
   return res.json();
 }
+
+export async function updateJobOptionsByToken(
+  token: string,
+  options: {
+    color_mode?: ColorMode;
+    sides?: SidesMode;
+    copies?: number;
+    page_range?: string;
+  }
+): Promise<{ success: boolean; job: PrintJob; warning?: string }> {
+  const res = await fetch(`${API_BASE}/jobs/token/${encodeURIComponent(token)}/options`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(options),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.error || 'Failed to update order options');
+  }
+  return res.json();
+}
+
 

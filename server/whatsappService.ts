@@ -72,6 +72,7 @@ interface PendingBatch {
   colorMode: ColorMode;
   sides: SidesMode;
   copies: number;
+  pageRange?: string;
 }
 
 const pendingBatches = new Map<string, PendingBatch>();
@@ -139,30 +140,176 @@ async function tryConvertToPdf(
   });
 }
 
-/**
- * Parse caption or text for printing keywords
- */
-function parseKeywords(text: string): {
+export interface ParsedPrintOptions {
   colorMode?: ColorMode;
   sides?: SidesMode;
   copies?: number;
-} {
-  const lower = text.toLowerCase();
-  const res: { colorMode?: ColorMode; sides?: SidesMode; copies?: number } = {};
+  pageRange?: string;
+  effectivePages?: number;
+  warning?: string;
+  isShortcut?: boolean;
+}
 
-  if (/\b(color|colour)\b/i.test(lower)) {
-    res.colorMode = 'color';
-  } else if (/\b(bw|b\/w|black|black\s*and\s*white|mono)\b/i.test(lower)) {
-    res.colorMode = 'bw';
+/**
+ * Normalizes user-entered page range strings into standard CUPS/calculator format (e.g. "1-5", "1,3,5").
+ * Clamps requested page range to document totalPages if provided.
+ */
+export function formatPageRangeString(
+  input: string,
+  totalPages?: number
+): { pageRange: string; effectivePages: number; warning?: string } {
+  const clean = input.trim();
+  if (
+    !clean ||
+    clean.toLowerCase() === 'all' ||
+    clean.toLowerCase() === 'all pages' ||
+    clean.toLowerCase() === 'all page' ||
+    clean.toLowerCase() === 'entire doc' ||
+    clean.toLowerCase() === 'entire document'
+  ) {
+    return {
+      pageRange: 'all',
+      effectivePages: totalPages && totalPages > 0 ? totalPages : 1,
+    };
   }
 
-  if (/\b(duplex|double|both\s*side|front\s*and\s*back|two\s*side)\b/i.test(lower)) {
+  // Strip words like "pages", "page", "p", "only"
+  const stripped = clean
+    .replace(/\b(?:pages?|p|only)\b/gi, '')
+    .trim();
+
+  // Normalize "to", "through", "thru", "until" to "-"
+  const normalized = stripped
+    .replace(/\b(?:to|through|thru|until)\b/gi, '-')
+    .replace(/\s*-\s*/g, '-')
+    .replace(/\s*,\s*/g, ',');
+
+  // Extract page segments
+  const parts = normalized.split(',').map((p) => p.trim()).filter(Boolean);
+  const pagesSet = new Set<number>();
+  let hasExceeded = false;
+
+  for (const part of parts) {
+    if (part.includes('-')) {
+      const [startStr, endStr] = part.split('-');
+      const start = parseInt(startStr, 10);
+      const end = parseInt(endStr, 10);
+      if (!isNaN(start) && !isNaN(end) && start > 0 && end > 0) {
+        const from = Math.min(start, end);
+        const to = Math.max(start, end);
+        if (totalPages && totalPages > 0 && to > totalPages) {
+          hasExceeded = true;
+        }
+        const clampedFrom = Math.max(1, totalPages ? Math.min(from, totalPages) : from);
+        const clampedTo = totalPages ? Math.min(to, totalPages) : to;
+        for (let i = clampedFrom; i <= clampedTo; i++) {
+          pagesSet.add(i);
+        }
+      }
+    } else {
+      const pageNum = parseInt(part, 10);
+      if (!isNaN(pageNum) && pageNum > 0) {
+        if (totalPages && totalPages > 0 && pageNum > totalPages) {
+          hasExceeded = true;
+        }
+        const clamped = totalPages ? Math.min(pageNum, totalPages) : pageNum;
+        pagesSet.add(clamped);
+      }
+    }
+  }
+
+  const sortedPages = Array.from(pagesSet).sort((a, b) => a - b);
+  if (sortedPages.length === 0) {
+    return {
+      pageRange: 'all',
+      effectivePages: totalPages && totalPages > 0 ? totalPages : 1,
+    };
+  }
+
+  // Group sorted numbers into standard canonical range string (e.g. 1-4 or 1-3,5)
+  const rangeSegments: string[] = [];
+  let rangeStart = sortedPages[0];
+  let prev = sortedPages[0];
+
+  for (let i = 1; i < sortedPages.length; i++) {
+    const cur = sortedPages[i];
+    if (cur === prev + 1) {
+      prev = cur;
+    } else {
+      rangeSegments.push(rangeStart === prev ? `${rangeStart}` : `${rangeStart}-${prev}`);
+      rangeStart = cur;
+      prev = cur;
+    }
+  }
+  rangeSegments.push(rangeStart === prev ? `${rangeStart}` : `${rangeStart}-${prev}`);
+  const canonicalRange = rangeSegments.join(',');
+
+  let warning: string | undefined;
+  if (hasExceeded && totalPages && totalPages > 0) {
+    warning = `Requested page range exceeds document total (${totalPages} pages). Clamped to ${canonicalRange}.`;
+  }
+
+  return {
+    pageRange: canonicalRange,
+    effectivePages: sortedPages.length,
+    warning,
+  };
+}
+
+/**
+ * Natural Language Multi-Option Sentence Parser
+ * Parses color, sides, copies, page range, and numbered quick-reply shortcuts.
+ */
+export function parsePrintKeywords(text: string, totalPages?: number): ParsedPrintOptions {
+  const trimmed = text.trim();
+  if (!trimmed) return {};
+
+  const lower = trimmed.toLowerCase();
+  const res: ParsedPrintOptions = {};
+
+  // 1. Numbered Quick-Reply Shortcuts: 1, 2, 3, 4
+  const shortcutMatch = trimmed.match(/^(?:option\s*|opt\s*|#)?([1-4])$/i);
+  if (shortcutMatch) {
+    const num = shortcutMatch[1];
+    res.isShortcut = true;
+    switch (num) {
+      case '1':
+        res.colorMode = 'bw';
+        res.sides = 'single';
+        return res;
+      case '2':
+        res.colorMode = 'bw';
+        res.sides = 'duplex';
+        return res;
+      case '3':
+        res.colorMode = 'color';
+        res.sides = 'single';
+        return res;
+      case '4':
+        res.colorMode = 'color';
+        res.sides = 'duplex';
+        return res;
+    }
+  }
+
+  // 2. Color Mode
+  if (/\b(bw|b\/w|black\s*(?:and|&)\s*white|black|mono(?:chrome)?|greyscale|grayscale)\b/i.test(lower)) {
+    res.colorMode = 'bw';
+  } else if (/\b(in\s+colou?r|colou?r)\b/i.test(lower)) {
+    res.colorMode = 'color';
+  }
+
+  // 3. Sides Mode (Duplex vs Single)
+  if (/\b(front\s*(?:and|&)\s*back|both\s*sides?|duplex|double\s*sided?|two\s*sided?|2\s*sided?)\b/i.test(lower)) {
     res.sides = 'duplex';
-  } else if (/\b(single|one\s*side|single\s*side)\b/i.test(lower)) {
+  } else if (/\b(single\s*sided?|single|one\s*side?|1\s*sided?|1\s*side)\b/i.test(lower)) {
     res.sides = 'single';
   }
 
-  const copiesMatch = lower.match(/\b(\d+)\s*(?:copies|copy)\b/i) || lower.match(/\b(?:copies|copy)\s*[:=]?\s*(\d+)\b/i);
+  // 4. Copies
+  const copiesMatch =
+    lower.match(/\b(\d+)\s*(?:copies|copy|sets?)\b/i) ||
+    lower.match(/\b(?:copies|copy|sets?)\s*[:=]?\s*(\d+)\b/i);
   if (copiesMatch) {
     const parsed = parseInt(copiesMatch[1], 10);
     if (!isNaN(parsed) && parsed > 0 && parsed <= 500) {
@@ -170,7 +317,67 @@ function parseKeywords(text: string): {
     }
   }
 
+  // 5. Page Range
+  if (/\b(?:all\s*pages?|entire\s*(?:doc|document))\b/i.test(lower) || lower === 'all') {
+    res.pageRange = 'all';
+    if (totalPages && totalPages > 0) {
+      res.effectivePages = totalPages;
+    }
+  } else if (/\bfirst\s*(\d+)\s*pages?\b/i.test(lower)) {
+    const m = lower.match(/\bfirst\s*(\d+)\s*pages?\b/i);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      const pr = formatPageRangeString(`1-${n}`, totalPages);
+      res.pageRange = pr.pageRange;
+      res.effectivePages = pr.effectivePages;
+      if (pr.warning) res.warning = pr.warning;
+    }
+  } else if (/\blast\s*(\d+)\s*pages?\b/i.test(lower) && totalPages && totalPages > 0) {
+    const m = lower.match(/\blast\s*(\d+)\s*pages?\b/i);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      const start = Math.max(1, totalPages - n + 1);
+      const pr = formatPageRangeString(`${start}-${totalPages}`, totalPages);
+      res.pageRange = pr.pageRange;
+      res.effectivePages = pr.effectivePages;
+      if (pr.warning) res.warning = pr.warning;
+    }
+  } else if (/\bonly\s+pages?\s*(\d+)\b/i.test(lower) || /\bpages?\s*(\d+)\s+only\b/i.test(lower)) {
+    const m = lower.match(/\bonly\s+pages?\s*(\d+)\b/i) || lower.match(/\bpages?\s*(\d+)\s+only\b/i);
+    if (m) {
+      const pageNum = parseInt(m[1], 10);
+      const pr = formatPageRangeString(`${pageNum}`, totalPages);
+      res.pageRange = pr.pageRange;
+      res.effectivePages = pr.effectivePages;
+      if (pr.warning) res.warning = pr.warning;
+    }
+  } else {
+    // Check for "pages 1 to 4", "page 1-5", "p 1-3, 5", "page 2"
+    const rangeMatch = lower.match(/\b(?:pages?|p)\s*[:=]?\s*([0-9\s,\-to]+)\b/i);
+    if (rangeMatch) {
+      const raw = rangeMatch[1].trim();
+      if (/\d/.test(raw)) {
+        const pr = formatPageRangeString(raw, totalPages);
+        res.pageRange = pr.pageRange;
+        res.effectivePages = pr.effectivePages;
+        if (pr.warning) res.warning = pr.warning;
+      }
+    }
+  }
+
   return res;
+}
+
+/**
+ * Backward compatibility alias for parsePrintKeywords
+ */
+function parseKeywords(text: string): {
+  colorMode?: ColorMode;
+  sides?: SidesMode;
+  copies?: number;
+  pageRange?: string;
+} {
+  return parsePrintKeywords(text);
 }
 
 /**
@@ -372,7 +579,7 @@ async function handleIncomingWhatsAppMessage(msg: WAMessage) {
 
       // Parse caption if provided with media
       const captionText = documentMsg?.caption || imageMsg?.caption || '';
-      const parsedOpts = parseKeywords(captionText);
+      const parsedOpts = parsePrintKeywords(captionText, detectedPages);
 
       // Batch ingestion handling (7-second sliding debounce window, silent without intermediate processing messages)
       let batch = pendingBatches.get(senderJid);
@@ -389,6 +596,7 @@ async function handleIncomingWhatsAppMessage(msg: WAMessage) {
         if (parsedOpts.colorMode) batch.colorMode = parsedOpts.colorMode;
         if (parsedOpts.sides) batch.sides = parsedOpts.sides;
         if (parsedOpts.copies) batch.copies = parsedOpts.copies;
+        if (parsedOpts.pageRange) batch.pageRange = parsedOpts.pageRange;
       } else {
         batch = {
           senderJid,
@@ -406,6 +614,7 @@ async function handleIncomingWhatsAppMessage(msg: WAMessage) {
           colorMode: parsedOpts.colorMode || 'bw',
           sides: parsedOpts.sides || 'single',
           copies: parsedOpts.copies || 1,
+          pageRange: parsedOpts.pageRange || 'all',
           timer: setTimeout(() => {}, 0),
         };
         pendingBatches.set(senderJid, batch);
@@ -432,10 +641,12 @@ async function handleIncomingWhatsAppMessage(msg: WAMessage) {
   // Check if customer has an active batch currently waiting in debounce window
   const activeBatch = pendingBatches.get(senderJid);
   if (activeBatch) {
-    const opts = parseKeywords(trimmed);
+    const totalBatchPages = activeBatch.files.reduce((sum, f) => sum + f.pageCount, 0);
+    const opts = parsePrintKeywords(trimmed, totalBatchPages);
     if (opts.colorMode) activeBatch.colorMode = opts.colorMode;
     if (opts.sides) activeBatch.sides = opts.sides;
     if (opts.copies) activeBatch.copies = opts.copies;
+    if (opts.pageRange) activeBatch.pageRange = opts.pageRange;
 
     if (/\b(done|print|go|ready|finish)\b/i.test(trimmed)) {
       clearTimeout(activeBatch.timer);
@@ -451,53 +662,7 @@ async function handleIncomingWhatsAppMessage(msg: WAMessage) {
   if (pendingJob) {
     const upper = trimmed.toUpperCase();
 
-    // 1. Color Mode Toggle
-    if (upper === 'COLOR' || upper === 'COLOUR') {
-      const pricing = getEffectivePricing();
-      if (!pricing.color_available) {
-        await sock.sendMessage(senderJid, {
-          text: `⚠️ *Color Printing Unavailable*\nOur color printer is currently in maintenance. Your job will be printed in *Black & White*.`,
-        });
-        return;
-      }
-      applyJobUpdate(pendingJob, { colorMode: 'color' }, senderJid);
-      return;
-    }
-
-    if (upper === 'BW' || upper === 'BLACK' || upper === 'B&W') {
-      applyJobUpdate(pendingJob, { colorMode: 'bw' }, senderJid);
-      return;
-    }
-
-    // 2. Sides Mode Toggle
-    if (upper === 'DUPLEX' || upper === 'DOUBLE' || upper === 'BOTH' || upper === 'FRONT AND BACK') {
-      const pricing = getEffectivePricing();
-      if (!pricing.duplex_available) {
-        await sock.sendMessage(senderJid, {
-          text: `⚠️ *Duplex Unavailable*\nTwo-sided printing is currently disabled across active printers.`,
-        });
-        return;
-      }
-      applyJobUpdate(pendingJob, { sides: 'duplex' }, senderJid);
-      return;
-    }
-
-    if (upper === 'SINGLE' || upper === 'ONE' || upper === '1 SIDE') {
-      applyJobUpdate(pendingJob, { sides: 'single' }, senderJid);
-      return;
-    }
-
-    // 3. Copies Command
-    const copiesMatch = trimmed.match(/^(\d+)\s*(?:copies|copy)?$/i) || trimmed.match(/^(?:copies|copy)\s*[:=]?\s*(\d+)$/i);
-    if (copiesMatch) {
-      const count = parseInt(copiesMatch[1], 10);
-      if (count > 0 && count <= 500) {
-        applyJobUpdate(pendingJob, { copies: count }, senderJid);
-        return;
-      }
-    }
-
-    // 4. Cancel Command
+    // 1. Cancel Command
     if (upper === 'CANCEL' || upper === 'DELETE') {
       updateJob(pendingJob.id, { status: 'cancelled' });
       if (broadcastCallback) {
@@ -509,12 +674,43 @@ async function handleIncomingWhatsAppMessage(msg: WAMessage) {
       return;
     }
 
-    // 5. Status / Price Enquiry
+    // 2. Status / Price Enquiry
     if (upper === 'STATUS' || upper === 'PRICE' || upper === 'COST') {
-      const inWords = numberToWords(pendingJob.estimated_cost);
-      await sock.sendMessage(senderJid, {
-        text: `🎫 Token: *${pendingJob.token}*\n💰 Total Amount: *₹${pendingJob.estimated_cost.toFixed(2)}* (Rupees ${inWords} Only)`,
-      });
+      const tunnel = await getTunnelStatus();
+      const receipt = formatWhatsAppReceipt(pendingJob, tunnel.activeUrl);
+      await sock.sendMessage(senderJid, { text: receipt });
+      return;
+    }
+
+    // 3. Multi-Option Natural Language Instructions & Shortcuts
+    const opts = parsePrintKeywords(trimmed, pendingJob.page_count);
+    if (opts.colorMode || opts.sides || opts.copies || opts.pageRange) {
+      const pricing = getEffectivePricing();
+      let warning = opts.warning;
+
+      let colorMode = opts.colorMode;
+      let sides = opts.sides;
+
+      if (colorMode === 'color' && !pricing.color_available) {
+        colorMode = 'bw';
+        warning = 'Color printing is currently in maintenance. Set to Black & White.';
+      }
+      if (sides === 'duplex' && !pricing.duplex_available) {
+        sides = 'single';
+        warning = 'Duplex printing is currently unavailable. Set to Single Sided.';
+      }
+
+      await applyJobUpdate(
+        pendingJob,
+        {
+          colorMode,
+          sides,
+          copies: opts.copies,
+          pageRange: opts.pageRange,
+          warning,
+        },
+        senderJid
+      );
       return;
     }
   }
@@ -583,40 +779,155 @@ export function numberToWords(amount: number): string {
 }
 
 /**
+ * Structured confirmation receipt with quick-reply guide and 1-tap mobile customizer link
+ */
+export function formatWhatsAppReceipt(
+  job: PrintJob,
+  tunnelUrl: string,
+  warning?: string
+): string {
+  const inWords = numberToWords(job.estimated_cost);
+  const colorLabel = job.color_mode === 'color' ? 'Color' : 'B/W';
+  const sidesLabel = job.sides === 'duplex' ? 'Front & Back' : 'Single Sided';
+  const pageRangeLabel =
+    !job.page_range || job.page_range.toLowerCase() === 'all'
+      ? 'All Pages'
+      : `Pages ${job.page_range}`;
+  const copiesLabel = `${job.copies} ${job.copies > 1 ? 'Copies' : 'Copy'}`;
+
+  const cleanToken = job.token.replace(/^#/, '');
+  const customizerUrl = `${tunnelUrl.replace(/\/$/, '')}/order/${encodeURIComponent(cleanToken)}`;
+
+  let docInfo = `📄 *Received:* ${job.original_filename}`;
+  if (job.page_count && job.page_count > 0) {
+    docInfo += ` (${job.page_count} ${job.page_count === 1 ? 'page' : 'pages'})`;
+  }
+
+  const lines = [
+    `✅ *Print Job Confirmed!*`,
+    ``,
+    docInfo,
+    `⚙️ *Options:* ${colorLabel} • ${sidesLabel} • ${pageRangeLabel} • ${copiesLabel}`,
+    `💰 *Total:* *₹${job.estimated_cost.toFixed(2)}* (Rupees ${inWords} Only)`,
+    `🎫 *Token:* *${job.token}*`,
+  ];
+
+  if (warning) {
+    lines.push(`⚠️ _${warning}_`);
+  }
+
+  lines.push(
+    ``,
+    `✏️ *To change options, simply reply:*`,
+    `• "Color" or "BW"`,
+    `• "Front and back" or "Single"`,
+    `• "Pages 1-5" (specific pages)`,
+    `• "2 copies"`,
+    `• Or reply 1, 2, 3, 4 for quick options`,
+    ``,
+    `📱 *Or customize online with 1 tap:*`,
+    `${customizerUrl}`
+  );
+
+  return lines.join('\n');
+}
+
+/**
+ * Structured update notification sent when customer modifies options
+ */
+export function formatWhatsAppUpdateReceipt(
+  job: PrintJob,
+  tunnelUrl: string,
+  warning?: string
+): string {
+  const inWords = numberToWords(job.estimated_cost);
+  const colorLabel = job.color_mode === 'color' ? 'Color' : 'B/W';
+  const sidesLabel = job.sides === 'duplex' ? 'Front & Back' : 'Single Sided';
+  const pageRangeLabel =
+    !job.page_range || job.page_range.toLowerCase() === 'all'
+      ? 'All Pages'
+      : `Pages ${job.page_range}`;
+  const copiesLabel = `${job.copies} ${job.copies > 1 ? 'Copies' : 'Copy'}`;
+
+  const cleanToken = job.token.replace(/^#/, '');
+  const customizerUrl = `${tunnelUrl.replace(/\/$/, '')}/order/${encodeURIComponent(cleanToken)}`;
+
+  let docInfo = `📄 *Document:* ${job.original_filename}`;
+  if (job.page_count && job.page_count > 0) {
+    docInfo += ` (${job.page_count} ${job.page_count === 1 ? 'page' : 'pages'})`;
+  }
+
+  const lines = [
+    `✅ *Print Options Updated!*`,
+    ``,
+    docInfo,
+    `⚙️ *Options:* ${colorLabel} • ${sidesLabel} • ${pageRangeLabel} • ${copiesLabel}`,
+    `💰 *Total:* *₹${job.estimated_cost.toFixed(2)}* (Rupees ${inWords} Only)`,
+    `🎫 *Token:* *${job.token}*`,
+  ];
+
+  if (warning) {
+    lines.push(`⚠️ _${warning}_`);
+  }
+
+  lines.push(
+    ``,
+    `📱 *Customize online:*`,
+    `${customizerUrl}`
+  );
+
+  return lines.join('\n');
+}
+
+/**
  * Apply keyword updates to an existing pending job and notify customer
  */
-async function applyJobUpdate(
+export async function applyJobUpdate(
   job: PrintJob,
-  updates: { colorMode?: ColorMode; sides?: SidesMode; copies?: number },
+  updates: {
+    colorMode?: ColorMode;
+    sides?: SidesMode;
+    copies?: number;
+    pageRange?: string;
+    warning?: string;
+  },
   recipientJid: string
-) {
-  if (!sock) return;
-
+): Promise<PrintJob | undefined> {
   const pricing = getEffectivePricing();
   const files = getJobFiles(job.id);
 
   let newColor = updates.colorMode || job.color_mode;
   let newSides = updates.sides || job.sides;
   let newCopies = updates.copies || job.copies;
+  let newPageRange = updates.pageRange !== undefined ? updates.pageRange : job.page_range;
 
   if (!pricing.color_available && newColor === 'color') newColor = 'bw';
   if (!pricing.duplex_available && newSides === 'duplex') newSides = 'single';
 
   let totalCost = 0;
-  for (const f of files) {
+  let totalPages = 0;
+  let primaryEffectivePages = job.effective_pages;
+
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i];
     const cost = calculatePrintCost({
       totalPages: f.page_count,
-      pageRange: f.page_range,
+      pageRange: newPageRange,
       colorMode: newColor,
       sides: newSides,
       copies: newCopies,
       pricing,
     });
     totalCost += cost.totalCost;
+    totalPages += cost.effectivePages * newCopies;
+    if (i === 0) primaryEffectivePages = cost.effectivePages;
+
     updateJobFile(f.id, {
       color_mode: newColor,
       sides: newSides,
       copies: newCopies,
+      page_range: newPageRange,
+      effective_pages: cost.effectivePages,
       estimated_cost: cost.totalCost,
     });
   }
@@ -625,17 +936,41 @@ async function applyJobUpdate(
     color_mode: newColor,
     sides: newSides,
     copies: newCopies,
+    page_range: newPageRange,
+    effective_pages: primaryEffectivePages,
     estimated_cost: totalCost,
+    total_pages: totalPages,
   });
 
   if (broadcastCallback && updatedJob) {
     broadcastCallback({ type: 'JOB_UPDATED', job: updatedJob });
   }
 
-  const inWords = numberToWords(totalCost);
-  await sock.sendMessage(recipientJid, {
-    text: `🎫 Token: *${job.token}*\n💰 Total Amount: *₹${totalCost.toFixed(2)}* (Rupees ${inWords} Only)`,
-  });
+  if (sock && updatedJob) {
+    try {
+      const tunnel = await getTunnelStatus();
+      const updateText = formatWhatsAppUpdateReceipt(updatedJob, tunnel.activeUrl, updates.warning);
+      await sock.sendMessage(recipientJid, { text: updateText });
+    } catch (err: any) {
+      console.warn('[WhatsApp] Failed to send update receipt:', err.message);
+    }
+  }
+
+  return updatedJob;
+}
+
+/**
+ * Send WhatsApp notification when order options are updated via web
+ */
+export async function sendWhatsAppOrderUpdateNotification(job: PrintJob, warning?: string) {
+  if (!sock || !job.whatsapp_jid) return;
+  try {
+    const tunnel = await getTunnelStatus();
+    const updateText = formatWhatsAppUpdateReceipt(job, tunnel.activeUrl, warning);
+    await sock.sendMessage(job.whatsapp_jid, { text: updateText });
+  } catch (err: any) {
+    console.warn('[WhatsApp] Failed to send order update notification:', err.message);
+  }
 }
 
 /**
@@ -757,19 +1092,20 @@ async function finalizeWhatsAppJob(batch: PendingBatch) {
     const jobFiles: JobFile[] = [];
     let totalPages = 0;
     let totalCost = 0;
+    const pageRange = batch.pageRange || 'all';
 
     for (let i = 0; i < filesToProcess.length; i++) {
       const f = filesToProcess[i];
       const costRes = calculatePrintCost({
         totalPages: f.pageCount,
-        pageRange: 'all',
+        pageRange,
         colorMode,
         sides,
         copies,
         pricing,
       });
 
-      totalPages += f.pageCount * copies;
+      totalPages += costRes.effectivePages * copies;
       totalCost += costRes.totalCost;
 
       const jFile: JobFile = {
@@ -785,7 +1121,7 @@ async function finalizeWhatsAppJob(batch: PendingBatch) {
         sides,
         orientation: 'auto',
         copies,
-        page_range: 'all',
+        page_range: pageRange,
         effective_pages: costRes.effectivePages,
         estimated_cost: costRes.totalCost,
         file_index: i,
@@ -811,7 +1147,7 @@ async function finalizeWhatsAppJob(batch: PendingBatch) {
       sides,
       orientation: 'auto',
       copies,
-      page_range: 'all',
+      page_range: pageRange,
       effective_pages: primaryFile.effective_pages,
       estimated_cost: totalCost,
       status: 'pending',
@@ -834,13 +1170,11 @@ async function finalizeWhatsAppJob(batch: PendingBatch) {
       broadcastCallback({ type: 'NEW_JOB', job: saved });
     }
 
-    const inWords = numberToWords(totalCost);
-    const replyText =
-      `🎫 Token: *${token}*\n` +
-      `💰 Total Amount: *₹${totalCost.toFixed(2)}* (Rupees ${inWords} Only)`;
+    const tunnel = await getTunnelStatus();
+    const replyText = formatWhatsAppReceipt(saved, tunnel.activeUrl);
 
     await sock.sendMessage(batch.senderJid, { text: replyText });
-    console.log(`✅ [WhatsApp] Job ${token} created and confirmation sent to ${batch.senderJid}`);
+    console.log(`✅ [WhatsApp] Job ${token} created and confirmation receipt sent to ${batch.senderJid}`);
   } catch (err: any) {
     console.error('[WhatsApp] Failed to finalize job:', err);
   }

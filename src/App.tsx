@@ -2,22 +2,29 @@ import React, { useState, useEffect } from 'react';
 import { CustomerPortal } from './components/CustomerPortal.js';
 import { AdminDashboard } from './components/AdminDashboard.js';
 import { LoginPage } from './components/LoginPage.js';
+import { OrderCustomizer } from './components/OrderCustomizer.js';
 import { fetchCurrentUser, logout } from './api.js';
 import { AuthUser } from './types.js';
 
-export const App: React.FC = () => {
-  // Determine current view from pathname or query param
-  const [view, setView] = useState<'upload' | 'admin'>(() => {
-    if (typeof window !== 'undefined') {
-      const path = window.location.pathname.toLowerCase();
-      const params = new URLSearchParams(window.location.search);
-      if (path.startsWith('/admin') || params.get('view') === 'admin') {
-        return 'admin';
-      }
+function getInitialRoute(): { view: 'upload' | 'admin' | 'order'; orderToken?: string } {
+  if (typeof window !== 'undefined') {
+    const path = window.location.pathname;
+    const params = new URLSearchParams(window.location.search);
+    if (path.toLowerCase().startsWith('/admin') || params.get('view') === 'admin') {
+      return { view: 'admin' };
     }
-    return 'upload';
-  });
+    const orderMatch = path.match(/^\/order\/(?:token\/)?([^/?#]+)/i);
+    const tokenParam = params.get('token');
+    if (orderMatch || tokenParam) {
+      const rawToken = orderMatch ? decodeURIComponent(orderMatch[1]) : tokenParam!;
+      return { view: 'order', orderToken: rawToken };
+    }
+  }
+  return { view: 'upload' };
+}
 
+export const App: React.FC = () => {
+  const [route, setRoute] = useState(getInitialRoute);
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
 
@@ -34,23 +41,20 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     const handlePopState = () => {
-      const path = window.location.pathname.toLowerCase();
-      const params = new URLSearchParams(window.location.search);
-      if (path.startsWith('/admin') || params.get('view') === 'admin') {
-        setView('admin');
-      } else {
-        setView('upload');
-      }
+      setRoute(getInitialRoute());
     };
 
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
-  const navigateTo = (newView: 'upload' | 'admin') => {
-    setView(newView);
-    const newPath = newView === 'admin' ? '/admin' : '/';
+  const navigateTo = (newView: 'upload' | 'admin' | 'order', token?: string) => {
+    let newPath = '/';
+    if (newView === 'admin') newPath = '/admin';
+    else if (newView === 'order' && token) newPath = `/order/${encodeURIComponent(token.replace(/^#/, ''))}`;
+
     window.history.pushState({}, '', newPath);
+    setRoute({ view: newView, orderToken: token });
   };
 
   const handleLogout = async () => {
@@ -60,7 +64,12 @@ export const App: React.FC = () => {
 
   return (
     <div className="min-h-screen">
-      {view === 'admin' ? (
+      {route.view === 'order' && route.orderToken ? (
+        <OrderCustomizer
+          token={route.orderToken}
+          onBackToHome={() => navigateTo('upload')}
+        />
+      ) : route.view === 'admin' ? (
         isCheckingAuth ? (
           <div className="min-h-screen flex items-center justify-center bg-[var(--bg)] font-mono text-xs text-[var(--ink3)]">
             <div className="flex items-center gap-2">
@@ -102,3 +111,4 @@ export const App: React.FC = () => {
 };
 
 export default App;
+

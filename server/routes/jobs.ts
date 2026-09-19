@@ -21,7 +21,7 @@ import { uploadMiddleware, deletePhysicalFile, cleanupExpiredFiles } from '../st
 import { detectPageCount } from '../pdfService.js';
 import { calculatePrintCost } from '../../shared/costCalculator.js';
 import { PrintJob, JobFile, ColorMode, SidesMode, OrientationMode } from '../../shared/types.js';
-import { notifyWhatsAppJobPrinting, notifyWhatsAppJobCompleted } from '../whatsappService.js';
+import { notifyWhatsAppJobPrinting, notifyWhatsAppJobCompleted, sendWhatsAppOrderUpdateNotification, formatPageRangeString } from '../whatsappService.js';
 
 export function createJobsRouter(broadcast: (message: any) => void) {
   const router = Router();
@@ -354,6 +354,122 @@ export function createJobsRouter(broadcast: (message: any) => void) {
       });
 
       res.json({ success: true, file: updatedFile, job: updatedJob });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  const handleOptionsUpdate = async (
+    existing: PrintJob,
+    body: any,
+    res: Response
+  ) => {
+    if (existing.status === 'printed' || existing.status === 'cancelled') {
+      return res.status(400).json({ error: `Cannot modify a job that has already been ${existing.status}` });
+    }
+
+    const colorMode: ColorMode | undefined = body.color_mode || body.colorMode;
+    const sides: SidesMode | undefined = body.sides;
+    const copies: number | undefined = body.copies ? Math.max(1, parseInt(body.copies, 10)) : undefined;
+    const rawPageRange = body.page_range !== undefined ? body.page_range : body.pageRange;
+
+    const pricing = getEffectivePricing();
+    let newColor: ColorMode = colorMode || existing.color_mode;
+    let newSides: SidesMode = sides || existing.sides;
+    let newCopies: number = copies || existing.copies;
+    let newPageRange: string = rawPageRange !== undefined ? String(rawPageRange).trim() : existing.page_range;
+
+    if (!pricing.color_available && newColor === 'color') {
+      newColor = 'bw';
+    }
+    if (!pricing.duplex_available && newSides === 'duplex') {
+      newSides = 'single';
+    }
+
+    let warning: string | undefined;
+    if (newPageRange && newPageRange.toLowerCase() !== 'all') {
+      const parsedRange = formatPageRangeString(newPageRange, existing.page_count);
+      newPageRange = parsedRange.pageRange;
+      warning = parsedRange.warning;
+    } else {
+      newPageRange = 'all';
+    }
+
+    const files = getJobFiles(existing.id);
+    let totalCost = 0;
+    let totalPages = 0;
+    let primaryEffectivePages = existing.effective_pages;
+
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      const costRes = calculatePrintCost({
+        totalPages: f.page_count,
+        pageRange: newPageRange,
+        colorMode: newColor,
+        sides: newSides,
+        copies: newCopies,
+        pricing,
+      });
+
+      totalCost += costRes.totalCost;
+      totalPages += costRes.effectivePages * newCopies;
+      if (i === 0) primaryEffectivePages = costRes.effectivePages;
+
+      updateJobFile(f.id, {
+        color_mode: newColor,
+        sides: newSides,
+        copies: newCopies,
+        page_range: newPageRange,
+        effective_pages: costRes.effectivePages,
+        estimated_cost: costRes.totalCost,
+      });
+    }
+
+    const updated = updateJob(existing.id, {
+      color_mode: newColor,
+      sides: newSides,
+      copies: newCopies,
+      page_range: newPageRange,
+      effective_pages: primaryEffectivePages,
+      estimated_cost: totalCost,
+      total_pages: totalPages,
+    });
+
+    broadcast({
+      type: 'JOB_UPDATED',
+      job: updated,
+    });
+
+    if (updated && updated.source === 'whatsapp' && updated.whatsapp_jid) {
+      sendWhatsAppOrderUpdateNotification(updated, warning).catch(console.warn);
+    }
+
+    return res.json({ success: true, job: updated, warning });
+  };
+
+  // PATCH /api/jobs/token/:token/options - Mobile Customizer endpoint
+  router.patch('/token/:token/options', async (req: Request, res: Response) => {
+    try {
+      const token = String(req.params.token);
+      const existing = getJobByToken(token);
+      if (!existing) {
+        return res.status(404).json({ error: 'Job not found for token' });
+      }
+      await handleOptionsUpdate(existing, req.body, res);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // PATCH /api/jobs/:id/options - Options endpoint by job ID
+  router.patch('/:id/options', async (req: Request, res: Response) => {
+    try {
+      const id = String(req.params.id);
+      const existing = getJobById(id);
+      if (!existing) {
+        return res.status(404).json({ error: 'Job not found' });
+      }
+      await handleOptionsUpdate(existing, req.body, res);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

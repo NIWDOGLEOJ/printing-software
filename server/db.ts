@@ -401,7 +401,10 @@ export function getNextToken(): string {
     "SELECT COUNT(*) as count FROM jobs WHERE created_at LIKE ? || '%'"
   ).get(today) as { count: number };
 
-  const seq = 101 + (countRow?.count || 0);
+  let seq = 101 + (countRow?.count || 0);
+  while (db.prepare('SELECT id FROM jobs WHERE token = ?').get(`#P-${seq}`)) {
+    seq++;
+  }
   return `#P-${seq}`;
 }
 
@@ -624,7 +627,7 @@ export function updateJob(id: string, updates: Partial<PrintJob>): PrintJob | un
 
 export function getJobByToken(token: string): PrintJob | undefined {
   const cleanToken = token.startsWith('#') ? token : `#${token}`;
-  const job = db.prepare('SELECT * FROM jobs WHERE token = ? OR token = ?').get(token, cleanToken) as PrintJob | undefined;
+  const job = db.prepare('SELECT * FROM jobs WHERE token = ? OR token = ? ORDER BY created_at DESC LIMIT 1').get(token, cleanToken) as PrintJob | undefined;
   if (!job) return undefined;
   return getJobById(job.id);
 }

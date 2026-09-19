@@ -176,5 +176,280 @@ describe('WhatsApp Integration & Database Support', () => {
     expect(numberToWords(34.50)).toBe('Thirty-Four and Fifty Paise');
     expect(numberToWords(0.50)).toBe('Fifty Paise');
   });
+
+  it('parses natural language multi-option combined sentences', async () => {
+    const { parsePrintKeywords } = await import('../server/whatsappService.js');
+
+    // Multi-option combined sentence: Color + Duplex + Copies + Page Range
+    const res1 = parsePrintKeywords('Color front and back 2 copies pages 1 to 4', 10);
+    expect(res1.colorMode).toBe('color');
+    expect(res1.sides).toBe('duplex');
+    expect(res1.copies).toBe(2);
+    expect(res1.pageRange).toBe('1-4');
+    expect(res1.effectivePages).toBe(4);
+
+    // B/W + Single Sided + Sets
+    const res2 = parsePrintKeywords('b/w single side 3 sets', 5);
+    expect(res2.colorMode).toBe('bw');
+    expect(res2.sides).toBe('single');
+    expect(res2.copies).toBe(3);
+
+    // Black and white + double sided + specific page
+    const res3 = parsePrintKeywords('black and white duplex only page 2', 5);
+    expect(res3.colorMode).toBe('bw');
+    expect(res3.sides).toBe('duplex');
+    expect(res3.pageRange).toBe('2');
+    expect(res3.effectivePages).toBe(1);
+
+    // "in colour" + "both sides" + "first 3 pages"
+    const res4 = parsePrintKeywords('print in colour both sides first 3 pages', 8);
+    expect(res4.colorMode).toBe('color');
+    expect(res4.sides).toBe('duplex');
+    expect(res4.pageRange).toBe('1-3');
+    expect(res4.effectivePages).toBe(3);
+
+    // Discontinuous page range: p 1-3, 5 + copies
+    const res5 = parsePrintKeywords('p 1-3, 5 2 copies', 10);
+    expect(res5.copies).toBe(2);
+    expect(res5.pageRange).toBe('1-3,5');
+    expect(res5.effectivePages).toBe(4);
+
+    // All pages
+    const res6 = parsePrintKeywords('all pages', 12);
+    expect(res6.pageRange).toBe('all');
+    expect(res6.effectivePages).toBe(12);
+
+    // Prefix copy
+    const res7 = parsePrintKeywords('copy 4 mono', 10);
+    expect(res7.copies).toBe(4);
+    expect(res7.colorMode).toBe('bw');
+  });
+
+  it('correctly handles numbered quick-reply shortcuts (1, 2, 3, 4)', async () => {
+    const { parsePrintKeywords } = await import('../server/whatsappService.js');
+
+    // 1 -> B/W Single
+    const opt1 = parsePrintKeywords('1');
+    expect(opt1.isShortcut).toBe(true);
+    expect(opt1.colorMode).toBe('bw');
+    expect(opt1.sides).toBe('single');
+
+    // 2 -> B/W Front & Back
+    const opt2 = parsePrintKeywords('2');
+    expect(opt2.isShortcut).toBe(true);
+    expect(opt2.colorMode).toBe('bw');
+    expect(opt2.sides).toBe('duplex');
+
+    // 3 -> Color Single
+    const opt3 = parsePrintKeywords('3');
+    expect(opt3.isShortcut).toBe(true);
+    expect(opt3.colorMode).toBe('color');
+    expect(opt3.sides).toBe('single');
+
+    // 4 -> Color Front & Back
+    const opt4 = parsePrintKeywords('4');
+    expect(opt4.isShortcut).toBe(true);
+    expect(opt4.colorMode).toBe('color');
+    expect(opt4.sides).toBe('duplex');
+
+    // "2 copies" should NOT trigger shortcut 2, it should parse copies: 2
+    const optCopies = parsePrintKeywords('2 copies');
+    expect(optCopies.isShortcut).toBeFalsy();
+    expect(optCopies.copies).toBe(2);
+    expect(optCopies.colorMode).toBeUndefined();
+  });
+
+  it('formats page ranges and clamps out-of-range requests cleanly', async () => {
+    const { formatPageRangeString } = await import('../server/whatsappService.js');
+
+    // Standard range
+    const r1 = formatPageRangeString('1 to 4', 10);
+    expect(r1.pageRange).toBe('1-4');
+    expect(r1.effectivePages).toBe(4);
+    expect(r1.warning).toBeUndefined();
+
+    // Out of bounds range clamping
+    const r2 = formatPageRangeString('pages 1 to 8', 4);
+    expect(r2.pageRange).toBe('1-4');
+    expect(r2.effectivePages).toBe(4);
+    expect(r2.warning).toContain('exceeds document total');
+
+    // Discontinuous range
+    const r3 = formatPageRangeString('1-3, 5, 7', 10);
+    expect(r3.pageRange).toBe('1-3,5,7');
+    expect(r3.effectivePages).toBe(5);
+
+    // Single page out of range clamped
+    const r4 = formatPageRangeString('page 10', 4);
+    expect(r4.pageRange).toBe('4');
+    expect(r4.effectivePages).toBe(1);
+    expect(r4.warning).toContain('exceeds document total');
+  });
+
+  it('formats transparent WhatsApp confirmation receipt with quick-reply guide and web link', async () => {
+    const { formatWhatsAppReceipt } = await import('../server/whatsappService.js');
+
+    const mockJob: PrintJob = {
+      id: 'job_test_receipt',
+      token: '#P-202',
+      customer_name: 'Ananya Verma',
+      original_filename: 'thesis_report.pdf',
+      stored_filename: 'thesis_report.pdf',
+      file_path: '/tmp/thesis.pdf',
+      file_size: 2048,
+      mime_type: 'application/pdf',
+      page_count: 12,
+      color_mode: 'bw',
+      sides: 'duplex',
+      orientation: 'auto',
+      copies: 2,
+      page_range: '1-6',
+      effective_pages: 6,
+      estimated_cost: 18,
+      status: 'pending',
+      created_at: new Date().toISOString(),
+      printed_at: null,
+      printer_name: null,
+      cups_job_id: null,
+      total_files: 1,
+      total_pages: 12,
+      source: 'whatsapp',
+      whatsapp_jid: '919123456789@s.whatsapp.net',
+    };
+
+    const receipt = formatWhatsAppReceipt(mockJob, 'https://station.example.com');
+    expect(receipt).toContain('📄 *Received:* thesis_report.pdf (12 pages)');
+    expect(receipt).toContain('⚙️ *Options:* B/W • Front & Back • Pages 1-6 • 2 Copies');
+    expect(receipt).toContain('💰 *Total:* *₹18.00* (Rupees Eighteen Only)');
+    expect(receipt).toContain('🎫 *Token:* *#P-202*');
+    expect(receipt).toContain('✏️ *To change options, simply reply:*');
+    expect(receipt).toContain('• "Color" or "BW"');
+    expect(receipt).toContain('• "Front and back" or "Single"');
+    expect(receipt).toContain('• "Pages 1-5" (specific pages)');
+    expect(receipt).toContain('• "2 copies"');
+    expect(receipt).toContain('• Or reply 1, 2, 3, 4 for quick options');
+    expect(receipt).toContain('https://station.example.com/order/P-202');
+  });
+
+  it('updates order options via PATCH /api/jobs/token/:token/options and recalculates cost', async () => {
+    const express = (await import('express')).default;
+    const http = await import('http');
+    const { createJobsRouter } = await import('../server/routes/jobs.js');
+
+    const app = express();
+    app.use(express.json());
+    app.use('/api/jobs', createJobsRouter(() => {}));
+
+    const server = http.createServer(app);
+    await new Promise<void>((resolve) => {
+      server.listen(0, '127.0.0.1', () => resolve());
+    });
+
+    const addr = server.address() as any;
+    const baseUrl = `http://127.0.0.1:${addr.port}`;
+
+    try {
+      const testJobId = `test_wa_${Date.now()}`;
+      const token = getNextToken();
+
+      const testFile: JobFile = {
+        id: `file_${testJobId}_0`,
+        job_id: testJobId,
+        original_filename: 'presentation.pdf',
+        stored_filename: `${testJobId}.pdf`,
+        file_path: `/tmp/${testJobId}.pdf`,
+        file_size: 5000,
+        mime_type: 'application/pdf',
+        page_count: 8,
+        color_mode: 'bw',
+        sides: 'single',
+        orientation: 'auto',
+        copies: 1,
+        page_range: 'all',
+        effective_pages: 8,
+        estimated_cost: 24, // 8 pages * 3
+        file_index: 0,
+        status: 'pending',
+        cups_job_id: null,
+        printed_at: null,
+      };
+
+      const testJob: PrintJob = {
+        id: testJobId,
+        token,
+        customer_name: 'Priya',
+        original_filename: 'presentation.pdf',
+        stored_filename: `${testJobId}.pdf`,
+        file_path: `/tmp/${testJobId}.pdf`,
+        file_size: 5000,
+        mime_type: 'application/pdf',
+        page_count: 8,
+        color_mode: 'bw',
+        sides: 'single',
+        orientation: 'auto',
+        copies: 1,
+        page_range: 'all',
+        effective_pages: 8,
+        estimated_cost: 24,
+        status: 'pending',
+        created_at: new Date().toISOString(),
+        printed_at: null,
+        printer_name: null,
+        cups_job_id: null,
+        files: [testFile],
+        total_files: 1,
+        total_pages: 8,
+        source: 'whatsapp',
+        whatsapp_jid: '919876500000@s.whatsapp.net',
+      };
+
+      insertJobWithFiles(testJob, [testFile]);
+
+      // Call PATCH /api/jobs/token/:token/options to customize options
+      // Change to Color, Duplex, 2 copies, pages 1 to 4 (4 pages)
+      const patchRes = await fetch(`${baseUrl}/api/jobs/token/${encodeURIComponent(token)}/options`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          color_mode: 'color',
+          sides: 'duplex',
+          copies: 2,
+          page_range: '1-4',
+        }),
+      });
+
+      expect(patchRes.status).toBe(200);
+      const patchData = await patchRes.json();
+      expect(patchData.success).toBe(true);
+      expect(patchData.job.color_mode).toBe('color');
+      expect(patchData.job.sides).toBe('duplex');
+      expect(patchData.job.copies).toBe(2);
+      expect(patchData.job.page_range).toBe('1-4');
+      expect(patchData.job.effective_pages).toBe(4);
+      // In active profiles, Canon GX4070 color duplex price is ₹18 per sheet.
+      // 4 pages duplex = 2 sheets * 18 = 36 per copy * 2 copies = 72!
+      expect(patchData.job.estimated_cost).toBe(72);
+
+      // Verify directly from SQLite DB
+      const updatedInDb = getJobById(testJobId);
+      expect(updatedInDb).toBeDefined();
+      expect(updatedInDb?.color_mode).toBe('color');
+      expect(updatedInDb?.sides).toBe('duplex');
+      expect(updatedInDb?.copies).toBe(2);
+      expect(updatedInDb?.page_range).toBe('1-4');
+      expect(updatedInDb?.estimated_cost).toBe(72);
+
+      // Verify 404 on non-existent token
+      const notFoundRes = await fetch(`${baseUrl}/api/jobs/token/nonexistent_token/options`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ copies: 3 }),
+      });
+      expect(notFoundRes.status).toBe(404);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
 });
+
 
