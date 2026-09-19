@@ -172,4 +172,75 @@ describe('Print Configuration Modal & WhatsApp 1-Tap Link Tests', () => {
     expect(updateMsg).toContain('https://jmart-print.ngrok.app/order/P-101');
     expect(updateMsg).toContain('1️⃣ B/W Single  2️⃣ B/W Duplex  3️⃣ Color Single  4️⃣ Color Duplex');
   });
+
+  it('falls back to default localhost URL if tunnel URL is empty or null', () => {
+    const sampleJob: PrintJob = {
+      id: 'job_whatsapp_sample_notunnel',
+      token: 'P-101',
+      customer_name: 'Rahul',
+      original_filename: 'report.pdf',
+      stored_filename: 'report.pdf',
+      file_path: '/tmp/report.pdf',
+      file_size: 1024,
+      mime_type: 'application/pdf',
+      page_count: 5,
+      color_mode: 'bw',
+      sides: 'single',
+      orientation: 'auto',
+      copies: 1,
+      page_range: 'all',
+      effective_pages: 5,
+      estimated_cost: 10.0,
+      status: 'pending',
+      created_at: new Date().toISOString(),
+      printed_at: null,
+      printer_name: null,
+      cups_job_id: null,
+      total_files: 1,
+      total_pages: 5,
+      source: 'whatsapp',
+      whatsapp_jid: '919876543210@s.whatsapp.net',
+    };
+
+    const receipt = formatWhatsAppReceipt(sampleJob, '');
+    expect(receipt).toContain('http://localhost:3000/order/P-101');
+
+    const updateMsg = formatWhatsAppUpdateReceipt(sampleJob, '');
+    expect(updateMsg).toContain('http://localhost:3000/order/P-101');
+  });
+
+  it('correctly calculates cumulative multi-file costs when documents have distinct options', () => {
+    const pricing = {
+      ...DEFAULT_PRICING,
+      bw_price_per_page: 2,
+      color_price_per_page: 10,
+      duplex_sheet_price_bw: 3,
+      duplex_sheet_price_color: 18,
+    };
+
+    // File 1: 10 pages B&W Duplex = 5 sheets * ₹3 = ₹15
+    const file1Calc = calculatePrintCost({
+      totalPages: 10,
+      pageRange: 'all',
+      colorMode: 'bw',
+      sides: 'duplex',
+      copies: 1,
+      pricing,
+    });
+    expect(file1Calc.totalCost).toBe(15);
+
+    // File 2: 4 pages Color Single = 4 pages * ₹10 = ₹40
+    const file2Calc = calculatePrintCost({
+      totalPages: 4,
+      pageRange: 'all',
+      colorMode: 'color',
+      sides: 'single',
+      copies: 1,
+      pricing,
+    });
+    expect(file2Calc.totalCost).toBe(40);
+
+    const totalOrderCost = file1Calc.totalCost + file2Calc.totalCost;
+    expect(totalOrderCost).toBe(55);
+  });
 });

@@ -113,6 +113,45 @@ export const OrderCustomizer: React.FC<OrderCustomizerProps> = ({ token, onBackT
   const isDuplexDisabled = pricing?.duplex_available === false;
   const isReadOnly = job?.status === 'printed' || job?.status === 'cancelled';
 
+  const handleTogglePagePill = (pageNum: number) => {
+    if (isReadOnly) return;
+    const currentList = parsePageRange(rangeMode === 'all' ? 'all' : (customRange.trim() || 'all'), totalDocPages);
+    let newList: number[];
+    if (currentList.includes(pageNum)) {
+      newList = currentList.filter((p) => p !== pageNum);
+    } else {
+      newList = [...currentList, pageNum].sort((a, b) => a - b);
+    }
+
+    if (newList.length === 0) {
+      setRangeMode('custom');
+      setCustomRange(`${pageNum}`);
+      return;
+    }
+    if (newList.length === totalDocPages) {
+      setRangeMode('all');
+      setCustomRange('');
+      return;
+    }
+
+    setRangeMode('custom');
+    const parts: string[] = [];
+    let start = newList[0];
+    let end = start;
+
+    for (let i = 1; i < newList.length; i++) {
+      if (newList[i] === end + 1) {
+        end = newList[i];
+      } else {
+        parts.push(start === end ? `${start}` : `${start}-${end}`);
+        start = newList[i];
+        end = start;
+      }
+    }
+    parts.push(start === end ? `${start}` : `${start}-${end}`);
+    setCustomRange(parts.join(', '));
+  };
+
   const handleCopyToken = () => {
     if (!job) return;
     navigator.clipboard?.writeText(job.token);
@@ -529,7 +568,94 @@ export const OrderCustomizer: React.FC<OrderCustomizerProps> = ({ token, onBackT
             </div>
 
             {rangeMode === 'custom' && (
-              <div className="pt-2 space-y-2">
+              <div className="pt-2 space-y-3">
+                {/* Visual Page Buttons (if doc has <= 24 pages) */}
+                {totalDocPages > 1 && totalDocPages <= 24 && (
+                  <div>
+                    <div className="text-[10px] font-mono text-[var(--ink3)] uppercase tracking-wider mb-1.5">
+                      Tap pages to include/exclude:
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
+                      {Array.from({ length: totalDocPages }, (_, i) => i + 1).map((pg) => {
+                        const isIncluded = selectedPagesList.includes(pg);
+                        return (
+                          <button
+                            key={pg}
+                            type="button"
+                            disabled={isReadOnly}
+                            onClick={() => handleTogglePagePill(pg)}
+                            className={`w-8 h-8 rounded-lg text-xs font-mono font-bold border transition cursor-pointer ${
+                              isIncluded
+                                ? 'border-[var(--accent)] bg-[var(--accent)] text-white shadow-xs'
+                                : 'border-[var(--border)] bg-[var(--panel)] text-[var(--ink3)] hover:text-[var(--ink)]'
+                            } ${isReadOnly ? 'opacity-50 cursor-not-allowed' : ''}`}
+                          >
+                            {pg}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex flex-wrap gap-1.5 pt-0.5">
+                  <span className="text-[10px] text-[var(--ink3)] py-0.5 font-mono">Quick:</span>
+                  <button
+                    type="button"
+                    disabled={isReadOnly}
+                    onClick={() => setCustomRange('1')}
+                    className="px-2 py-0.5 rounded bg-[var(--sub)] border border-[var(--border)] text-[10px] font-mono text-[var(--ink2)] hover:text-[var(--ink)] cursor-pointer disabled:opacity-50"
+                  >
+                    Page 1 Only
+                  </button>
+                  {totalDocPages >= 3 && (
+                    <button
+                      type="button"
+                      disabled={isReadOnly}
+                      onClick={() => setCustomRange('1-3')}
+                      className="px-2 py-0.5 rounded bg-[var(--sub)] border border-[var(--border)] text-[10px] font-mono text-[var(--ink2)] hover:text-[var(--ink)] cursor-pointer disabled:opacity-50"
+                    >
+                      Pages 1-3
+                    </button>
+                  )}
+                  {totalDocPages >= 5 && (
+                    <button
+                      type="button"
+                      disabled={isReadOnly}
+                      onClick={() => setCustomRange('1-5')}
+                      className="px-2 py-0.5 rounded bg-[var(--sub)] border border-[var(--border)] text-[10px] font-mono text-[var(--ink2)] hover:text-[var(--ink)] cursor-pointer disabled:opacity-50"
+                    >
+                      Pages 1-5
+                    </button>
+                  )}
+                  {totalDocPages >= 2 && (
+                    <>
+                      <button
+                        type="button"
+                        disabled={isReadOnly}
+                        onClick={() => {
+                          const odds = Array.from({ length: totalDocPages }, (_, i) => i + 1).filter((p) => p % 2 !== 0);
+                          setCustomRange(odds.join(', '));
+                        }}
+                        className="px-2 py-0.5 rounded bg-[var(--sub)] border border-[var(--border)] text-[10px] font-mono text-[var(--ink2)] hover:text-[var(--ink)] cursor-pointer disabled:opacity-50"
+                      >
+                        Odd Pages
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isReadOnly}
+                        onClick={() => {
+                          const evens = Array.from({ length: totalDocPages }, (_, i) => i + 1).filter((p) => p % 2 === 0);
+                          setCustomRange(evens.join(', '));
+                        }}
+                        className="px-2 py-0.5 rounded bg-[var(--sub)] border border-[var(--border)] text-[10px] font-mono text-[var(--ink2)] hover:text-[var(--ink)] cursor-pointer disabled:opacity-50"
+                      >
+                        Even Pages
+                      </button>
+                    </>
+                  )}
+                </div>
+
                 <input
                   type="text"
                   disabled={isReadOnly}
@@ -551,34 +677,6 @@ export const OrderCustomizer: React.FC<OrderCustomizerProps> = ({ token, onBackT
                     )}
                   </div>
                 )}
-                <div className="flex flex-wrap gap-1.5 pt-1">
-                  <span className="text-[10px] text-[var(--ink3)] py-0.5">Quick chips:</span>
-                  <button
-                    type="button"
-                    onClick={() => setCustomRange('1')}
-                    className="px-2 py-0.5 rounded bg-[var(--sub)] border border-[var(--border)] text-[10px] font-mono text-[var(--ink2)] hover:text-[var(--ink)]"
-                  >
-                    Only Page 1
-                  </button>
-                  {totalDocPages >= 3 && (
-                    <button
-                      type="button"
-                      onClick={() => setCustomRange('1-3')}
-                      className="px-2 py-0.5 rounded bg-[var(--sub)] border border-[var(--border)] text-[10px] font-mono text-[var(--ink2)] hover:text-[var(--ink)]"
-                    >
-                      Pages 1-3
-                    </button>
-                  )}
-                  {totalDocPages >= 5 && (
-                    <button
-                      type="button"
-                      onClick={() => setCustomRange('1-5')}
-                      className="px-2 py-0.5 rounded bg-[var(--sub)] border border-[var(--border)] text-[10px] font-mono text-[var(--ink2)] hover:text-[var(--ink)]"
-                    >
-                      Pages 1-5
-                    </button>
-                  )}
-                </div>
               </div>
             )}
           </div>

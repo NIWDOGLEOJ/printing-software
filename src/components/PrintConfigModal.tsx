@@ -34,6 +34,15 @@ export interface UploadedFileModalItem {
   };
 }
 
+export interface SinglePrintConfig {
+  colorMode: ColorMode;
+  sides: SidesMode;
+  orientation: OrientationMode;
+  copies: number;
+  rangeMode: 'all' | 'custom';
+  customRange: string;
+}
+
 export interface PrintConfigModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -54,6 +63,16 @@ export interface PrintConfigModalProps {
     pageRange: string;
     applyToAll: boolean;
     targetFileId?: string;
+    perFileConfigs?: Record<
+      string,
+      {
+        colorMode: ColorMode;
+        sides: SidesMode;
+        orientation: OrientationMode;
+        copies: number;
+        pageRange: string;
+      }
+    >;
   }) => void;
 }
 
@@ -81,51 +100,131 @@ export const PrintConfigModal: React.FC<PrintConfigModalProps> = ({
   const [rangeMode, setRangeMode] = useState<'all' | 'custom'>('all');
   const [customRange, setCustomRange] = useState<string>('');
   const [applyToAll, setApplyToAll] = useState<boolean>(true);
+  const [fileConfigs, setFileConfigs] = useState<Record<string, SinglePrintConfig>>({});
 
-  // Sync state when modal opens or active file changes
+  // Initialize or re-sync per-file configurations map when modal opens
   useEffect(() => {
     if (!isOpen) return;
 
-    if (activeFile) {
-      const opts = activeFile.customOptions;
-      setColorMode(opts?.colorMode || masterColorMode || 'bw');
-      setSides(opts?.sides || masterSides || 'single');
-      setOrientation(opts?.orientation || masterOrientation || 'auto');
-      setCopies(opts?.copies || masterCopies || 1);
-
+    const initialConfigs: Record<string, SinglePrintConfig> = {};
+    for (const f of files) {
+      const opts = f.customOptions;
       const activeRange = opts?.pageRange || masterPageRange || 'all';
-      if (activeRange && activeRange.toLowerCase() !== 'all') {
-        setRangeMode('custom');
-        setCustomRange(activeRange);
-      } else {
-        setRangeMode('all');
-        setCustomRange('');
-      }
-    } else {
-      setColorMode(masterColorMode || 'bw');
-      setSides(masterSides || 'single');
-      setOrientation(masterOrientation || 'auto');
-      setCopies(masterCopies || 1);
-      setRangeMode(masterPageRange && masterPageRange !== 'all' ? 'custom' : 'all');
-      setCustomRange(masterPageRange && masterPageRange !== 'all' ? masterPageRange : '');
+      const isCustomRange = Boolean(activeRange && activeRange.toLowerCase() !== 'all');
+      initialConfigs[f.id] = {
+        colorMode: opts?.colorMode || masterColorMode || 'bw',
+        sides: opts?.sides || masterSides || 'single',
+        orientation: opts?.orientation || masterOrientation || 'auto',
+        copies: opts?.copies || masterCopies || 1,
+        rangeMode: isCustomRange ? 'custom' : 'all',
+        customRange: isCustomRange ? activeRange : '',
+      };
     }
+    setFileConfigs(initialConfigs);
 
-    // Default applyToAll to true if all files currently have uniform options or multiple files
-    setApplyToAll(files.length > 1);
-  }, [isOpen, activeFile?.id]);
+    const activeCfg = (activeFile && initialConfigs[activeFile.id]) || {
+      colorMode: masterColorMode || 'bw',
+      sides: masterSides || 'single',
+      orientation: masterOrientation || 'auto',
+      copies: masterCopies || 1,
+      rangeMode: masterPageRange && masterPageRange !== 'all' ? 'custom' : 'all',
+      customRange: masterPageRange && masterPageRange !== 'all' ? masterPageRange : '',
+    };
+
+    setColorMode(activeCfg.colorMode);
+    setSides(activeCfg.sides);
+    setOrientation(activeCfg.orientation);
+    setCopies(activeCfg.copies);
+    setRangeMode(activeCfg.rangeMode);
+    setCustomRange(activeCfg.customRange);
+
+    // Default applyToAll to true
+    setApplyToAll(true);
+  }, [isOpen]);
 
   // Adjust options if capabilities disable them
   useEffect(() => {
     if (pricing.color_available === false && colorMode === 'color') {
-      setColorMode('bw');
+      updateOption('colorMode', 'bw');
     }
   }, [pricing.color_available, colorMode]);
 
   useEffect(() => {
     if (pricing.duplex_available === false && sides === 'duplex') {
-      setSides('single');
+      updateOption('sides', 'single');
     }
   }, [pricing.duplex_available, sides]);
+
+  // Helper to switch active file tab without losing any tab's customizations
+  const handleSelectFile = (fileId: string) => {
+    onSelectActiveFile(fileId);
+    const targetCfg = fileConfigs[fileId];
+    if (targetCfg) {
+      setColorMode(targetCfg.colorMode);
+      setSides(targetCfg.sides);
+      setOrientation(targetCfg.orientation);
+      setCopies(targetCfg.copies);
+      setRangeMode(targetCfg.rangeMode);
+      setCustomRange(targetCfg.customRange);
+    }
+  };
+
+  // Helper to mutate any option, keeping active view and fileConfigs in sync
+  const updateOption = <K extends keyof SinglePrintConfig>(key: K, value: SinglePrintConfig[K]) => {
+    if (key === 'colorMode') setColorMode(value as ColorMode);
+    else if (key === 'sides') setSides(value as SidesMode);
+    else if (key === 'orientation') setOrientation(value as OrientationMode);
+    else if (key === 'copies') setCopies(value as number);
+    else if (key === 'rangeMode') setRangeMode(value as 'all' | 'custom');
+    else if (key === 'customRange') setCustomRange(value as string);
+
+    setFileConfigs((prev) => {
+      const next = { ...prev };
+      const currentActiveId = activeFile?.id;
+      if (applyToAll || files.length <= 1) {
+        for (const f of files) {
+          next[f.id] = {
+            colorMode: key === 'colorMode' ? (value as ColorMode) : (next[f.id]?.colorMode ?? colorMode),
+            sides: key === 'sides' ? (value as SidesMode) : (next[f.id]?.sides ?? sides),
+            orientation: key === 'orientation' ? (value as OrientationMode) : (next[f.id]?.orientation ?? orientation),
+            copies: key === 'copies' ? (value as number) : (next[f.id]?.copies ?? copies),
+            rangeMode: key === 'rangeMode' ? (value as 'all' | 'custom') : (next[f.id]?.rangeMode ?? rangeMode),
+            customRange: key === 'customRange' ? (value as string) : (next[f.id]?.customRange ?? customRange),
+          };
+        }
+      } else if (currentActiveId) {
+        next[currentActiveId] = {
+          colorMode: key === 'colorMode' ? (value as ColorMode) : (next[currentActiveId]?.colorMode ?? colorMode),
+          sides: key === 'sides' ? (value as SidesMode) : (next[currentActiveId]?.sides ?? sides),
+          orientation: key === 'orientation' ? (value as OrientationMode) : (next[currentActiveId]?.orientation ?? orientation),
+          copies: key === 'copies' ? (value as number) : (next[currentActiveId]?.copies ?? copies),
+          rangeMode: key === 'rangeMode' ? (value as 'all' | 'custom') : (next[currentActiveId]?.rangeMode ?? rangeMode),
+          customRange: key === 'customRange' ? (value as string) : (next[currentActiveId]?.customRange ?? customRange),
+        };
+      }
+      return next;
+    });
+  };
+
+  const handleToggleApplyToAll = (checked: boolean) => {
+    setApplyToAll(checked);
+    if (checked) {
+      setFileConfigs((prev) => {
+        const next = { ...prev };
+        for (const f of files) {
+          next[f.id] = {
+            colorMode,
+            sides,
+            orientation,
+            copies,
+            rangeMode,
+            customRange,
+          };
+        }
+        return next;
+      });
+    }
+  };
 
   // Keyboard accessibility: Escape to close
   useEffect(() => {
@@ -148,44 +247,42 @@ export const PrintConfigModal: React.FC<PrintConfigModalProps> = ({
   const isColorDisabled = pricing.color_available === false;
   const isDuplexDisabled = pricing.duplex_available === false;
 
-  // Live Cost Calculations
-  // If applyToAll is true, calculate cumulative across all files. Otherwise for activeFile.
+  // Live Cost Calculations across all files or active file
   let calculatedTotalCost = 0;
   let calculatedTotalSheets = 0;
   let calculatedEffectivePages = 0;
 
-  if (applyToAll && files.length > 0) {
-    for (const item of files) {
-      const itemPages = item.detectedPages || 1;
-      const res = calculatePrintCost({
-        totalPages: itemPages,
-        pageRange: activePageRange,
-        colorMode,
-        sides,
-        copies,
-        pricing,
-      });
-      calculatedTotalCost += res.totalCost;
-      calculatedTotalSheets += res.sheets * copies;
-      calculatedEffectivePages += res.effectivePages * copies;
+  for (const item of files) {
+    const itemPages = item.detectedPages || 1;
+    let itemColor = colorMode;
+    let itemSides = sides;
+    let itemCopies = copies;
+    let itemRange = activePageRange;
+
+    if (!applyToAll && files.length > 1 && fileConfigs[item.id]) {
+      const cfg = fileConfigs[item.id];
+      itemColor = cfg.colorMode;
+      itemSides = cfg.sides;
+      itemCopies = cfg.copies;
+      itemRange = cfg.rangeMode === 'all' ? 'all' : (cfg.customRange.trim() || 'all');
     }
-  } else {
+
     const res = calculatePrintCost({
-      totalPages: totalDocPages,
-      pageRange: activePageRange,
-      colorMode,
-      sides,
-      copies,
+      totalPages: itemPages,
+      pageRange: itemRange,
+      colorMode: itemColor,
+      sides: itemSides,
+      copies: itemCopies,
       pricing,
     });
-    calculatedTotalCost = res.totalCost;
-    calculatedTotalSheets = res.sheets * copies;
-    calculatedEffectivePages = res.effectivePages * copies;
+    calculatedTotalCost += res.totalCost;
+    calculatedTotalSheets += res.sheets * itemCopies;
+    calculatedEffectivePages += res.effectivePages * itemCopies;
   }
 
   // Quick page toggle helper for interactive pill selector
   const handleTogglePagePill = (pageNum: number) => {
-    const currentList = parsePageRange(customRange.trim() || 'all', totalDocPages);
+    const currentList = parsePageRange(rangeMode === 'all' ? 'all' : (customRange.trim() || 'all'), totalDocPages);
     let newList: number[];
     if (currentList.includes(pageNum)) {
       newList = currentList.filter((p) => p !== pageNum);
@@ -194,46 +291,100 @@ export const PrintConfigModal: React.FC<PrintConfigModalProps> = ({
     }
 
     if (newList.length === 0) {
-      setCustomRange(`${pageNum}`);
-    } else if (newList.length === totalDocPages) {
-      setRangeMode('all');
-      setCustomRange('');
-    } else {
-      // Group consecutive numbers into ranges e.g. "1-3, 5"
-      const parts: string[] = [];
-      let start = newList[0];
-      let end = start;
-
-      for (let i = 1; i < newList.length; i++) {
-        if (newList[i] === end + 1) {
-          end = newList[i];
-        } else {
-          parts.push(start === end ? `${start}` : `${start}-${end}`);
-          start = newList[i];
-          end = start;
-        }
-      }
-      parts.push(start === end ? `${start}` : `${start}-${end}`);
-      setCustomRange(parts.join(', '));
+      updateOption('rangeMode', 'custom');
+      updateOption('customRange', `${pageNum}`);
+      return;
     }
+    if (newList.length === totalDocPages) {
+      updateOption('rangeMode', 'all');
+      updateOption('customRange', '');
+      return;
+    }
+
+    // Group consecutive numbers into ranges e.g. "1-3, 5"
+    const parts: string[] = [];
+    let start = newList[0];
+    let end = start;
+
+    for (let i = 1; i < newList.length; i++) {
+      if (newList[i] === end + 1) {
+        end = newList[i];
+      } else {
+        parts.push(start === end ? `${start}` : `${start}-${end}`);
+        start = newList[i];
+        end = start;
+      }
+    }
+    parts.push(start === end ? `${start}` : `${start}-${end}`);
+    updateOption('rangeMode', 'custom');
+    updateOption('customRange', parts.join(', '));
   };
 
   const handleConfirm = () => {
     const finalRange = rangeMode === 'all' ? 'all' : (customRange.trim() || 'all');
+    const isAll = Boolean(applyToAll || files.length <= 1);
+
+    const perFileExport: Record<
+      string,
+      {
+        colorMode: ColorMode;
+        sides: SidesMode;
+        orientation: OrientationMode;
+        copies: number;
+        pageRange: string;
+      }
+    > = {};
+
+    for (const item of files) {
+      if (isAll) {
+        perFileExport[item.id] = {
+          colorMode,
+          sides,
+          orientation,
+          copies,
+          pageRange: finalRange,
+        };
+      } else {
+        const cfg = fileConfigs[item.id] || {
+          colorMode,
+          sides,
+          orientation,
+          copies,
+          rangeMode,
+          customRange,
+        };
+        perFileExport[item.id] = {
+          colorMode: cfg.colorMode,
+          sides: cfg.sides,
+          orientation: cfg.orientation,
+          copies: cfg.copies,
+          pageRange: cfg.rangeMode === 'all' ? 'all' : (cfg.customRange.trim() || 'all'),
+        };
+      }
+    }
+
     onApply({
       colorMode,
       sides,
       orientation,
       copies,
       pageRange: finalRange,
-      applyToAll,
+      applyToAll: isAll,
       targetFileId: activeFile?.id,
+      perFileConfigs: perFileExport,
     });
     onClose();
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
+    <div
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          onClose();
+        }
+      }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200"
+    >
       <div
         className="bg-[var(--panel)] border border-[var(--border)] rounded-3xl w-full max-w-xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden font-sans text-[var(--ink)] animate-in zoom-in-95 duration-200"
         role="dialog"
@@ -286,7 +437,7 @@ export const PrintConfigModal: React.FC<PrintConfigModalProps> = ({
                     <button
                       key={f.id}
                       type="button"
-                      onClick={() => onSelectActiveFile(f.id)}
+                      onClick={() => handleSelectFile(f.id)}
                       className={`px-3 py-1.5 rounded-xl text-xs font-mono font-medium border flex items-center gap-1.5 shrink-0 transition cursor-pointer ${
                         isSelected
                           ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--ink)] font-bold shadow-xs'
@@ -310,7 +461,7 @@ export const PrintConfigModal: React.FC<PrintConfigModalProps> = ({
                 <input
                   type="checkbox"
                   checked={applyToAll}
-                  onChange={(e) => setApplyToAll(e.target.checked)}
+                  onChange={(e) => handleToggleApplyToAll(e.target.checked)}
                   className="w-4 h-4 rounded border-[var(--border)] text-[var(--accent)] focus:ring-[var(--accent)] bg-[var(--panel)] cursor-pointer"
                 />
                 <span className="text-xs font-medium text-[var(--ink)]">
@@ -351,7 +502,7 @@ export const PrintConfigModal: React.FC<PrintConfigModalProps> = ({
               {/* Black & White Card */}
               <button
                 type="button"
-                onClick={() => setColorMode('bw')}
+                onClick={() => updateOption('colorMode', 'bw')}
                 className={`p-3.5 rounded-2xl border-2 text-left flex flex-col justify-between min-h-[96px] transition cursor-pointer ${
                   colorMode === 'bw'
                     ? 'border-[var(--accent)] bg-[var(--accent-soft)] ring-1 ring-[var(--accent)] text-[var(--ink)] shadow-sm'
@@ -381,7 +532,7 @@ export const PrintConfigModal: React.FC<PrintConfigModalProps> = ({
                 type="button"
                 disabled={isColorDisabled}
                 onClick={() => {
-                  if (!isColorDisabled) setColorMode('color');
+                  if (!isColorDisabled) updateOption('colorMode', 'color');
                 }}
                 className={`relative p-3.5 rounded-2xl border-2 text-left flex flex-col justify-between min-h-[96px] transition cursor-pointer ${
                   isColorDisabled
@@ -437,7 +588,7 @@ export const PrintConfigModal: React.FC<PrintConfigModalProps> = ({
               {/* Single Sided Card */}
               <button
                 type="button"
-                onClick={() => setSides('single')}
+                onClick={() => updateOption('sides', 'single')}
                 className={`p-3.5 rounded-2xl border-2 text-left flex flex-col justify-between min-h-[96px] transition cursor-pointer ${
                   sides === 'single'
                     ? 'border-[var(--accent)] bg-[var(--accent-soft)] ring-1 ring-[var(--accent)] text-[var(--ink)] shadow-sm'
@@ -465,7 +616,7 @@ export const PrintConfigModal: React.FC<PrintConfigModalProps> = ({
                 type="button"
                 disabled={isDuplexDisabled}
                 onClick={() => {
-                  if (!isDuplexDisabled) setSides('duplex');
+                  if (!isDuplexDisabled) updateOption('sides', 'duplex');
                 }}
                 className={`relative p-3.5 rounded-2xl border-2 text-left flex flex-col justify-between min-h-[96px] transition cursor-pointer ${
                   isDuplexDisabled
@@ -517,7 +668,7 @@ export const PrintConfigModal: React.FC<PrintConfigModalProps> = ({
                 <button
                   type="button"
                   disabled={copies <= 1}
-                  onClick={() => setCopies((c) => Math.max(1, c - 1))}
+                  onClick={() => updateOption('copies', Math.max(1, copies - 1))}
                   className="w-12 h-12 flex items-center justify-center text-[var(--ink)] hover:bg-[var(--rule)] active:bg-[var(--border)] transition disabled:opacity-30 cursor-pointer"
                   aria-label="Decrease copies"
                 >
@@ -528,14 +679,14 @@ export const PrintConfigModal: React.FC<PrintConfigModalProps> = ({
                   min={1}
                   max={500}
                   value={copies}
-                  onChange={(e) => setCopies(Math.max(1, Math.min(500, parseInt(e.target.value, 10) || 1)))}
+                  onChange={(e) => updateOption('copies', Math.max(1, Math.min(500, parseInt(e.target.value, 10) || 1)))}
                   className="w-16 h-12 text-center font-mono font-black text-lg text-[var(--ink)] bg-transparent focus:outline-none"
                   aria-label="Copies input"
                 />
                 <button
                   type="button"
                   disabled={copies >= 500}
-                  onClick={() => setCopies((c) => Math.min(500, c + 1))}
+                  onClick={() => updateOption('copies', Math.min(500, copies + 1))}
                   className="w-12 h-12 flex items-center justify-center text-[var(--ink)] hover:bg-[var(--rule)] active:bg-[var(--border)] transition disabled:opacity-30 cursor-pointer"
                   aria-label="Increase copies"
                 >
@@ -549,7 +700,7 @@ export const PrintConfigModal: React.FC<PrintConfigModalProps> = ({
                   <button
                     key={num}
                     type="button"
-                    onClick={() => setCopies(num)}
+                    onClick={() => updateOption('copies', num)}
                     className={`px-3 py-2 rounded-xl border text-xs font-mono font-bold transition cursor-pointer ${
                       copies === num
                         ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]'
@@ -576,8 +727,8 @@ export const PrintConfigModal: React.FC<PrintConfigModalProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  setRangeMode('all');
-                  setCustomRange('');
+                  updateOption('rangeMode', 'all');
+                  updateOption('customRange', '');
                 }}
                 className={`py-2.5 px-3 rounded-xl border text-xs font-bold font-mono transition cursor-pointer ${
                   rangeMode === 'all'
@@ -590,7 +741,7 @@ export const PrintConfigModal: React.FC<PrintConfigModalProps> = ({
 
               <button
                 type="button"
-                onClick={() => setRangeMode('custom')}
+                onClick={() => updateOption('rangeMode', 'custom')}
                 className={`py-2.5 px-3 rounded-xl border text-xs font-bold font-mono transition cursor-pointer ${
                   rangeMode === 'custom'
                     ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)] border-2'
@@ -637,7 +788,10 @@ export const PrintConfigModal: React.FC<PrintConfigModalProps> = ({
                   <span className="text-[10px] font-mono text-[var(--ink3)]">Quick:</span>
                   <button
                     type="button"
-                    onClick={() => setCustomRange('1')}
+                    onClick={() => {
+                      updateOption('rangeMode', 'custom');
+                      updateOption('customRange', '1');
+                    }}
                     className="px-2.5 py-1 rounded-lg bg-[var(--panel)] border border-[var(--border)] text-[11px] font-mono text-[var(--ink2)] hover:text-[var(--ink)] cursor-pointer"
                   >
                     Page 1 Only
@@ -645,7 +799,10 @@ export const PrintConfigModal: React.FC<PrintConfigModalProps> = ({
                   {totalDocPages >= 3 && (
                     <button
                       type="button"
-                      onClick={() => setCustomRange('1-3')}
+                      onClick={() => {
+                        updateOption('rangeMode', 'custom');
+                        updateOption('customRange', '1-3');
+                      }}
                       className="px-2.5 py-1 rounded-lg bg-[var(--panel)] border border-[var(--border)] text-[11px] font-mono text-[var(--ink2)] hover:text-[var(--ink)] cursor-pointer"
                     >
                       Pages 1-3
@@ -654,7 +811,10 @@ export const PrintConfigModal: React.FC<PrintConfigModalProps> = ({
                   {totalDocPages >= 5 && (
                     <button
                       type="button"
-                      onClick={() => setCustomRange('1-5')}
+                      onClick={() => {
+                        updateOption('rangeMode', 'custom');
+                        updateOption('customRange', '1-5');
+                      }}
                       className="px-2.5 py-1 rounded-lg bg-[var(--panel)] border border-[var(--border)] text-[11px] font-mono text-[var(--ink2)] hover:text-[var(--ink)] cursor-pointer"
                     >
                       Pages 1-5
@@ -666,7 +826,8 @@ export const PrintConfigModal: React.FC<PrintConfigModalProps> = ({
                         type="button"
                         onClick={() => {
                           const odds = Array.from({ length: totalDocPages }, (_, i) => i + 1).filter((p) => p % 2 !== 0);
-                          setCustomRange(odds.join(', '));
+                          updateOption('rangeMode', 'custom');
+                          updateOption('customRange', odds.join(', '));
                         }}
                         className="px-2.5 py-1 rounded-lg bg-[var(--panel)] border border-[var(--border)] text-[11px] font-mono text-[var(--ink2)] hover:text-[var(--ink)] cursor-pointer"
                       >
@@ -676,7 +837,8 @@ export const PrintConfigModal: React.FC<PrintConfigModalProps> = ({
                         type="button"
                         onClick={() => {
                           const evens = Array.from({ length: totalDocPages }, (_, i) => i + 1).filter((p) => p % 2 === 0);
-                          setCustomRange(evens.join(', '));
+                          updateOption('rangeMode', 'custom');
+                          updateOption('customRange', evens.join(', '));
                         }}
                         className="px-2.5 py-1 rounded-lg bg-[var(--panel)] border border-[var(--border)] text-[11px] font-mono text-[var(--ink2)] hover:text-[var(--ink)] cursor-pointer"
                       >
@@ -691,7 +853,7 @@ export const PrintConfigModal: React.FC<PrintConfigModalProps> = ({
                   <input
                     type="text"
                     value={customRange}
-                    onChange={(e) => setCustomRange(e.target.value)}
+                    onChange={(e) => updateOption('customRange', e.target.value)}
                     placeholder="e.g. 1-5, 8, 11-14"
                     className="w-full px-3 py-2 rounded-xl border border-[var(--border)] bg-[var(--panel)] font-mono text-xs text-[var(--ink)] focus:border-[var(--accent)] focus:outline-none"
                   />
@@ -714,10 +876,12 @@ export const PrintConfigModal: React.FC<PrintConfigModalProps> = ({
           <div className="p-4 rounded-2xl bg-[var(--sub)] border-2 border-[var(--accent-line)] flex items-center justify-between">
             <div>
               <span style={EYEBROW} className="text-[var(--accent)] block">
-                {applyToAll && files.length > 1 ? `Total for All ${files.length} Documents` : 'Live Cost Calculation'}
+                {files.length > 1 ? `Total for All ${files.length} Documents` : 'Live Cost Calculation'}
               </span>
               <p className="font-mono text-xs text-[var(--ink2)] mt-0.5">
-                {calculatedEffectivePages} {calculatedEffectivePages === 1 ? 'page' : 'pages'} • {calculatedTotalSheets} {calculatedTotalSheets === 1 ? 'sheet' : 'sheets'} ({sides === 'duplex' ? 'Duplex' : 'Single'}) • {colorMode === 'color' ? 'Color' : 'B&W'}
+                {files.length > 1
+                  ? `${files.length} documents • ${calculatedEffectivePages} pages (${calculatedTotalSheets} ${calculatedTotalSheets === 1 ? 'sheet' : 'sheets'})${applyToAll ? ` • ${colorMode === 'color' ? 'Color' : 'B&W'} • ${sides === 'duplex' ? 'Duplex' : 'Single'}` : ' • Customized individually'}`
+                  : `${effectivePagesCount} ${effectivePagesCount === 1 ? 'page' : 'pages'} (${calculatedTotalSheets} ${calculatedTotalSheets === 1 ? 'sheet' : 'sheets'}) • ${colorMode === 'color' ? 'Color' : 'B&W'} • ${sides === 'duplex' ? 'Duplex' : 'Single'}${copies > 1 ? ` × ${copies} copies` : ''}`}
               </p>
             </div>
             <div className="text-right">

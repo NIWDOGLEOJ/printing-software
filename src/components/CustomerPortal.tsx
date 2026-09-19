@@ -211,8 +211,18 @@ export const CustomerPortal: React.FC = () => {
     pageRange: string;
     applyToAll: boolean;
     targetFileId?: string;
+    perFileConfigs?: Record<
+      string,
+      {
+        colorMode: ColorMode;
+        sides: SidesMode;
+        orientation: OrientationMode;
+        copies: number;
+        pageRange: string;
+      }
+    >;
   }) => {
-    if (config.applyToAll) {
+    if (config.applyToAll || files.length <= 1) {
       setMasterColorMode(config.colorMode);
       setMasterSides(config.sides);
       setMasterOrientation(config.orientation);
@@ -224,17 +234,30 @@ export const CustomerPortal: React.FC = () => {
         setPageRangeMode('custom');
         setCustomRange(config.pageRange);
       }
+      // Clear individual overrides so all files cleanly inherit master options
+      // and main page controls remain fully responsive
       setFiles((prev) =>
         prev.map((f) => ({
           ...f,
-          customOptions: {
-            colorMode: config.colorMode,
-            sides: config.sides,
-            orientation: config.orientation,
-            copies: config.copies,
-            pageRange: config.pageRange,
-          },
+          customOptions: undefined,
         }))
+      );
+    } else if (config.perFileConfigs) {
+      setFiles((prev) =>
+        prev.map((f) => {
+          const cfg = config.perFileConfigs?.[f.id];
+          if (!cfg) return f;
+          return {
+            ...f,
+            customOptions: {
+              colorMode: cfg.colorMode,
+              sides: cfg.sides,
+              orientation: cfg.orientation,
+              copies: cfg.copies,
+              pageRange: cfg.pageRange,
+            },
+          };
+        })
       );
     } else if (config.targetFileId) {
       setFiles((prev) =>

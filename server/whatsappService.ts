@@ -883,7 +883,8 @@ export function formatWhatsAppReceipt(
   const copiesLabel = job.copies > 1 ? ` • ${job.copies} Copies` : '';
 
   const cleanToken = job.token.replace(/^#/, '');
-  const customizerUrl = `${tunnelUrl.replace(/\/$/, '')}/order/${encodeURIComponent(cleanToken)}`;
+  const baseUrl = (tunnelUrl || '').trim().replace(/\/$/, '') || 'http://localhost:3000';
+  const customizerUrl = `${baseUrl}/order/${encodeURIComponent(cleanToken)}`;
 
   let docInfo = `📄 Received: ${job.original_filename}`;
   if (job.page_count && job.page_count > 0) {
@@ -927,7 +928,8 @@ export function formatWhatsAppUpdateReceipt(
   const copiesLabel = job.copies > 1 ? ` • ${job.copies} Copies` : '';
 
   const cleanToken = job.token.replace(/^#/, '');
-  const customizerUrl = `${tunnelUrl.replace(/\/$/, '')}/order/${encodeURIComponent(cleanToken)}`;
+  const baseUrl = (tunnelUrl || '').trim().replace(/\/$/, '') || 'http://localhost:3000';
+  const customizerUrl = `${baseUrl}/order/${encodeURIComponent(cleanToken)}`;
 
   let docInfo = `📄 Received: ${job.original_filename}`;
   if (job.page_count && job.page_count > 0) {
