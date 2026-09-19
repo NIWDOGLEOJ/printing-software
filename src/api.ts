@@ -226,9 +226,11 @@ export async function fetchTunnelStatus(): Promise<TunnelStatus> {
   return res.json();
 }
 
-export async function startTunnel(): Promise<TunnelStatus> {
+export async function startTunnel(provider: 'auto' | 'cloudflare' | 'ssh' = 'auto'): Promise<TunnelStatus> {
   const res = await fetch(`${API_BASE}/tunnel/start`, {
     method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ provider }),
   });
   if (!res.ok) throw new Error('Failed to start tunnel');
   return res.json();
@@ -249,6 +251,19 @@ export async function setManualTunnelUrl(url: string): Promise<TunnelStatus> {
     body: JSON.stringify({ url }),
   });
   if (!res.ok) throw new Error('Failed to set tunnel URL');
+  return res.json();
+}
+
+export async function saveTunnelSettings(settings: {
+  auto_start?: boolean;
+  preferred_provider?: string;
+}): Promise<{ settings: any; status: TunnelStatus }> {
+  const res = await fetch(`${API_BASE}/tunnel/settings`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(settings),
+  });
+  if (!res.ok) throw new Error('Failed to save tunnel settings');
   return res.json();
 }
 

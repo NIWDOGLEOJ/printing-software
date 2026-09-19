@@ -16,7 +16,7 @@ import { createWhatsAppRouter } from './routes/whatsapp.js';
 import { setWhatsAppBroadcast } from './whatsappService.js';
 import { initRetentionScheduler } from './storageService.js';
 import { initPrinterDiscoveryScheduler } from './printerDiscoveryService.js';
-import { setServerPort, getLocalIpAddresses } from './tunnelService.js';
+import { setServerPort, getLocalIpAddresses, initTunnelService, getTunnelStatus } from './tunnelService.js';
 import { getShopDetails } from './shopService.js';
 import { getPrinters } from './printerService.js';
 
@@ -118,11 +118,15 @@ initRetentionScheduler();
 // Start background network & hardware printer auto-discovery (every 25s)
 initPrinterDiscoveryScheduler(broadcast);
 
+// Start background tunnel service (auto-starts Cloudflare / SSH tunnel on boot)
+initTunnelService(broadcast);
+
 // Start Server
 server.listen(PORT, async () => {
   const shop = getShopDetails();
   const printers = await getPrinters();
   const localIps = getLocalIpAddresses();
+  const tunnel = await getTunnelStatus();
 
   console.log(`\n======================================================`);
   console.log(`🖨️  ${shop.shopName} - Quick Print Station & Management Server`);
@@ -133,6 +137,11 @@ server.listen(PORT, async () => {
   if (localIps.length > 0) {
     console.log(`📶 Local Wi-Fi Counter URLs:`);
     localIps.forEach(ip => console.log(`   👉 ${ip}/`));
+  }
+  if (tunnel.tunnelUrl) {
+    console.log(`🌐 Public Tunnel URL (${tunnel.provider}): ${tunnel.tunnelUrl}`);
+  } else if (tunnel.autoStart) {
+    console.log(`🌐 Public Tunnel: Auto-connecting in background...`);
   }
   console.log(`🖨️  Detected Printers (${printers.length}):`);
   printers.forEach(p => console.log(`   ${p.isDefault ? '⭐' : '•'} ${p.name} [${p.status}]`));

@@ -146,6 +146,15 @@ export interface TunnelStatus {
   localUrls: string[];
   activeUrl: string;
   qrCodeDataUrl: string;
+  provider: 'cloudflare' | 'ssh' | 'custom' | 'none';
+  autoStart: boolean;
+  error?: string | null;
+}
+
+export interface TunnelSettings {
+  auto_start: boolean;
+  preferred_provider: 'auto' | 'cloudflare' | 'ssh' | 'custom';
+  manual_url?: string;
 }
 
 export type PrinterConnectionType = 'network_bonjour' | 'usb_direct' | 'cups_queue' | 'network_ip';

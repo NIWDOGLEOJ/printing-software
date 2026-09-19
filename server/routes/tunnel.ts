@@ -1,10 +1,11 @@
 import { Router, Request, Response } from 'express';
 import {
   getTunnelStatus,
-  startCloudflareTunnel,
-  stopCloudflareTunnel,
+  startTunnel,
+  stopTunnel,
   setManualTunnelUrl,
 } from '../tunnelService.js';
+import { getTunnelSettings, updateTunnelSettings } from '../db.js';
 
 export function createTunnelRouter(broadcast: (message: any) => void) {
   const router = Router();
@@ -19,10 +20,40 @@ export function createTunnelRouter(broadcast: (message: any) => void) {
     }
   });
 
-  // POST /api/tunnel/start
-  router.post('/start', async (_req: Request, res: Response) => {
+  // GET /api/tunnel/settings
+  router.get('/settings', (_req: Request, res: Response) => {
     try {
-      const status = await startCloudflareTunnel((updatedStatus) => {
+      const settings = getTunnelSettings();
+      res.json(settings);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST /api/tunnel/settings
+  router.post('/settings', async (req: Request, res: Response) => {
+    try {
+      const { auto_start, preferred_provider } = req.body;
+      const updated = updateTunnelSettings({
+        auto_start: auto_start !== undefined ? Boolean(auto_start) : undefined,
+        preferred_provider,
+      });
+      const status = await getTunnelStatus();
+      broadcast({
+        type: 'TUNNEL_UPDATED',
+        tunnel: status,
+      });
+      res.json({ settings: updated, status });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST /api/tunnel/start
+  router.post('/start', async (req: Request, res: Response) => {
+    try {
+      const provider = req.body?.provider || 'auto';
+      const status = await startTunnel(provider, (updatedStatus) => {
         broadcast({
           type: 'TUNNEL_UPDATED',
           tunnel: updatedStatus,
@@ -43,7 +74,7 @@ export function createTunnelRouter(broadcast: (message: any) => void) {
   // POST /api/tunnel/stop
   router.post('/stop', async (_req: Request, res: Response) => {
     try {
-      const status = await stopCloudflareTunnel();
+      const status = await stopTunnel();
       broadcast({
         type: 'TUNNEL_UPDATED',
         tunnel: status,

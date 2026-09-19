@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
-import { PrintJob, JobFile, PricingSettings, PrinterProfile, EffectivePricing, WhatsAppSettings } from '../shared/types.js';
+import { PrintJob, JobFile, PricingSettings, PrinterProfile, EffectivePricing, WhatsAppSettings, TunnelSettings } from '../shared/types.js';
 import { DEFAULT_PRICING, calculateEffectivePricing } from '../shared/costCalculator.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -682,6 +682,31 @@ export function updateWhatsAppSettings(settings: Partial<WhatsAppSettings>): Wha
   });
   tx();
   return getWhatsAppSettings();
+}
+
+export function getTunnelSettings(): TunnelSettings {
+  const rows = db.prepare("SELECT key, value FROM pricing_settings WHERE key LIKE 'tunnel_%'").all() as { key: string; value: string }[];
+  const map: Record<string, string> = {};
+  for (const r of rows) {
+    map[r.key] = r.value;
+  }
+
+  return {
+    auto_start: map['tunnel_auto_start'] !== 'false', // default true so tunnel is automatically findable
+    preferred_provider: (map['tunnel_preferred_provider'] as any) || 'auto',
+    manual_url: map['tunnel_manual_url'] || '',
+  };
+}
+
+export function updateTunnelSettings(settings: Partial<TunnelSettings>): TunnelSettings {
+  const upsert = db.prepare('INSERT OR REPLACE INTO pricing_settings (key, value) VALUES (?, ?)');
+  const tx = db.transaction(() => {
+    if (settings.auto_start !== undefined) upsert.run('tunnel_auto_start', String(settings.auto_start));
+    if (settings.preferred_provider !== undefined) upsert.run('tunnel_preferred_provider', settings.preferred_provider);
+    if (settings.manual_url !== undefined) upsert.run('tunnel_manual_url', settings.manual_url);
+  });
+  tx();
+  return getTunnelSettings();
 }
 
 export function deleteJob(id: string): boolean {
